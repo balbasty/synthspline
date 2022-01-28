@@ -492,7 +492,8 @@ def curv_mode(curv, mode='max'):
     return curv
 
 
-def vertex_curv(coord, faces, mode='max', return_direction=False):
+def vertex_curv(coord, faces, mode='max', return_direction=False,
+                outliers=0.05, smooth=10):
     """Compute the curvature at each vertex
 
     Parameters
@@ -509,6 +510,12 @@ def vertex_curv(coord, faces, mode='max', return_direction=False):
         None : Individual curvature components = s1, s2
     return_direction : bool, default=False
         Return the principal directions
+    outliers : float in (0 .. 0.5), default=0.05
+        Clamp values outside this lower/upper quantile.
+        0 = no outlier removal
+        0.5 = all values clamped to the median
+    smooth : int, default=10
+        Number of smoothing (= averaging over the 1-ring) iterations
 
     Returns
     -------
@@ -520,6 +527,12 @@ def vertex_curv(coord, faces, mode='max', return_direction=False):
     """
     s, u, _ = _vertex_curv(coord, faces, fixdf=2, dir=return_direction)
     s = curv_mode(s, mode)
+    if outliers < 0 or outliers > 0.5:
+        raise ValueError('outliers must be in (0 .. 0.5)')
+    if outliers:
+        s = quantile_clamp_(s, outliers, 1-outliers)
+    if smooth:
+        s = smooth_overlay(s, faces, smooth)
     return (s, u) if return_direction else s
 
 
