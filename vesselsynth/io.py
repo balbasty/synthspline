@@ -89,7 +89,7 @@ def load_overlay(fname, numpy=False):
     """
     o = fsio.read_morph_data(fname)
     if not numpy:
-        if not ni_dtype.dtype(c.dtype).is_native:
+        if not ni_dtype.dtype(o.dtype).is_native:
             o = o.newbyteorder().byteswap(inplace=True)
         o = torch.as_tensor(o, dtype=ni_dtype.dtype(o.dtype).torch_upcast)
     return o

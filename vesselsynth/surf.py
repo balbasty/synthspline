@@ -636,3 +636,28 @@ def smooth_overlay(overlay, faces, nb_iter=1):
                 vertex_scatter_add_(overlay, faces[:, i], neighbor_overlay[:, j])
         overlay /= count
     return overlay
+
+
+def adjacency(n, faces):
+    """Compute the (sparse) adjacency matrix of a mesh
+
+    Parameters
+    ----------
+    n : int
+        Number of vertices
+    faces : (M, K) tensor
+        Faces
+
+    Returns
+    -------
+    adj : (n, n) sparse tensor[bool]
+        Adjacency matrix
+
+    """
+    one = torch.ones([1], dtype=torch.uint8, device=faces.device)
+    one = one.expand(len(faces))
+    adj = torch.sparse_coo_tensor(faces[:, :2], one, [n, n])
+    adj.add_(torch.sparse_coo_tensor(faces[:, 1:], one, [n, n]))
+    adj.add_(torch.sparse_coo_tensor(faces[:, [0, 2]], one, [n, n]))
+    adj.add_(adj.transpose(-1, -2))
+    return adj.bool()

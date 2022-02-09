@@ -31,6 +31,10 @@ References
        of the Arterial Vasculature"
       PADRAIG M. O’FLYNN, GERARD O’SULLIVAN, ABHAY S. PANDIT
       Annals of Biomedical Engineerin (2007)
+..[8] "A statistical model of the penetrating arterioles and venules in
+       the human cerebral cortex"
+      Wahbi K. El-Bouri, Stephen J. Payne
+      Microcirculation (2016)
 """
 
 
