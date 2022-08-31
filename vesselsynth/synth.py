@@ -3,6 +3,8 @@ from torch import nn as tnn
 from nitorch import nn
 from nitorch.core import py, optionals, linalg, utils
 from nitorch.spatial._curves import BSplineCurve, draw_curves
+from torch import distributions
+import math as pymath
 
 
 def _get_colormap_depth(colormap, n=256, dtype=None, device=None):
@@ -32,55 +34,58 @@ def mip_depth(x, dim=-1, colormap='rainbow'):
     return d
 
 
-class SynthVesselBlock(tnn.Module):
+def setup_lognormal_sampler(value):
+    if callable(value):
+        return value
+    else:
+        exp, scale = py.make_list(value, 2, default=0)
+        if scale:
+            var = scale * scale
+            var_log = pymath.log(1 + var / (exp*exp))
+            exp_log = pymath.log(exp) - var_log / 2
+            scale_log = pymath.sqrt(var_log)
+            return distributions.LogNormal(exp_log, scale_log).sample
+        else:
+            return lambda n=0: (torch.full([n], exp) if n else exp)
+
+
+class SynthSplineBlock(tnn.Module):
 
     def __init__(
             self,
             shape,
-            nb_classes=4,
-            voxel_size=0.1,  # 100 mu
-            tree_density_exp=0.5,  # trees/mm3 (should be 8 according to known_stats)
-            tree_density_scale=0.5,
+            voxel_size=0.1,             # 100 mu
+            tree_density=(0.5, 0.5),    # trees/mm3 (should be 8 according to known_stats)
+            tortuosity=(0.7, 0.2),      # expected jitter in mm
+            radius=(0.07, 0.01),        # mean radius
+            radius_change=(1., 0.1),    # radius variation along the vessel
             device=None):
         super().__init__()
-        self.simplex = nn.HyperRandomSmoothSimplexMap(shape, nb_classes,
-                                                      device=device, fwhm_exp=12)
-        self.mixture = nn.HyperRandomGaussianMixture(nb_classes, fwhm='uniform',
-                                                     fwhm_exp=12, fwhm_scale=4)
-        self.bias = nn.HyperRandomBiasFieldTransform(fwhm_exp=16, sigmoid=True)
-        self.vbias = nn.HyperRandomBiasFieldTransform(fwhm_exp=16, sigmoid=True)
-        self.noise = nn.HyperRandomChiNoise(sigma_exp=0.01, sigma_scale=0.02)
-        self.smooth = nn.RandomSmooth(fwhm_exp=1, fwhm_scale=1)
-        self.norm = nn.AffineQuantiles(qmin=0, qmax=1)
-        self.norm5 = nn.AffineQuantiles(qmin=0.05, qmax=0.95)
+        self.shape = shape
         self.vx = voxel_size
-        self.tree_density_exp = tree_density_exp
-        self.tree_density_scale = tree_density_scale
-        self.tree_density = nn.generators.distribution._LogNormal
-        self.tree_density = self.tree_density(tree_density_exp, tree_density_scale)
+        self.device = device or 'cpu'
+        self.tree_density = setup_lognormal_sampler(tree_density)
+        self.tortuosity = setup_lognormal_sampler(tortuosity)
+        self.radius = setup_lognormal_sampler(radius)
+        self.radius_change = setup_lognormal_sampler(radius_change)
 
     def forward(self, batch=1):
+        if batch > 1:
+            return torch.cat([self() for _ in range(batch)])
 
-        # sample background
         import time
-        start = time.time()
-        bg = self.simplex(batch).argmax(dim=1, keepdim=True)
-        bg = self.mixture(bg)
-        bg = self.smooth(bg)
-        bg = self.norm5(bg).clamp_(0, 1)
-        print('background: ', time.time() - start)
-        shape = bg.shape[2:]
-        dim = bg.dim() - 2
+        dim = len(self.shape)
 
         # sample vessels
-        volume = py.prod(bg.shape[2:]) * (self.vx ** (bg.dim() - 2))
-        density = self.tree_density.sample()
+        volume = py.prod(self.shape) * (self.vx ** dim)
+        density = self.tree_density()
         nb_trees = int(volume * density // 1)
 
         def clamp(x):
             # ensure point is inside FOV
             x = x.clamp_min(0)
-            x = torch.min(x, torch.as_tensor(shape, dtype=x.dtype))
+            mx = torch.as_tensor(self.shape, dtype=x.dtype)
+            x = torch.min(x, mx.to(x))
             return x
 
         def length(a, b):
@@ -91,59 +96,40 @@ class SynthVesselBlock(tnn.Module):
             return a + vector * torch.arange(n).unsqueeze(-1)
 
         start = time.time()
-        l0 = (py.prod(shape) ** (1 / dim))  # typical length
+        l0 = (py.prod(self.shape) ** (1 / dim))  # typical length
         curves = []
+        max_radius = 0
         print(nb_trees)
         for n_tree in range(nb_trees):
 
             # sample initial point and length
             n = 0
             while n < 3:
-                a = clamp(torch.randn([dim]) * l0)    # initial point
-                l = torch.rand([dim]) * l0            # length
-                b = clamp(a + l)                      # end point
-                l = length(a, b)                      # true length
-                n = (l / 5).ceil().int().item()       # number of discrete points
-            t = torch.rand([1]) * 7               # tortuosity
-            d = 1.2 + 0.1 * torch.randn([1])    # 1/sqrt(diameter)
-            r = 0.5 / (d*d)                       # radius
+                a = clamp(torch.randn([dim]) * l0)      # initial point
+                l = torch.rand([dim]) * l0              # length
+                b = clamp(a + l)                        # end point
+                l = length(a, b)                        # true length
+                n = (l / 5).ceil().int().item()         # number of discrete points
 
-            waypoints = linspace(a, b, n) + t * torch.randn([n, dim])
-            radii = r * torch.randn([n]).mul(0.1).exp()
-            curve = BSplineCurve(waypoints.to(bg.device),
-                                 radius=radii.to(bg.device))
+            waypoints = linspace(a, b, n)
+            waypoints += self.tortuosity() * torch.randn([n, dim])
+            radii = self.radius() * self.radius_change([n])
+            curve = BSplineCurve(waypoints.to(self.device),
+                                 radius=radii.to(self.device))
+            max_radius = max(max_radius, radii.max())
             curves.append(curve)
         print('sample curves: ', time.time() - start)
 
         # draw vessels
         start = time.time()
-        true_vessels = draw_curves(shape, curves, max_iter=10)[None, None]
+        true_vessels, _ = draw_curves(self.shape, curves, fast=10*max_radius)
         print('draw curves: ', time.time() - start)
 
         import matplotlib.pyplot as plt
-        plt.imshow(mip_depth(true_vessels[0, 0]))
+        plt.imshow(mip_depth(true_vessels.squeeze()))
         plt.show()
 
-        start = time.time()
-        vessels = self.vbias(true_vessels)
-        print(vessels.max(), true_vessels.max())
-        # vessels = self.norm(vessels).clamp_(0, 1)
-        vessels *= torch.rand([1], device=vessels.device).mul_(2)
-
-        # add to main image
-        print(bg.min(), bg.max(), vessels.max())
-        bg *= (1 - true_vessels)
-        bg.addcmul_(vessels, true_vessels)
-        bg = self.bias(bg)
-        bg = self.noise(bg)
-        bg = self.norm(bg).clamp_(0, 1)
-        print('make image: ', time.time() - start)
-
-        import matplotlib.pyplot as plt
-        plt.imshow(bg[0, 0, ..., 0])
-        plt.show()
-
-        return bg, true_vessels
+        return true_vessels[None, None]
 
 
 
