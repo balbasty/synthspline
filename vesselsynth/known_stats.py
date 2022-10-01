@@ -377,7 +377,7 @@ class StatLorthois2014:
     # each segment is parameterized by r(s) = [x(s), y(s), z(s)], with s
     # discretized in steps of 0.5 um.
     # First, second and third derivatives are noted r', r", r'"
-    # The curvature is defined as: κ = | r"| = sqrt( <r", r"> )
+    # The curvature is defined as: κ = |r"| = sqrt( <r", r"> )
     # The torsion is defined as:   τ = <r', r", r'"> / |r"|^2
     #                                = <r', r", r'"> / <r", r">
     # <a, b> = a . b  is the scalar product of two vectors

@@ -71,7 +71,12 @@ class SynthSplineBlock(tnn.Module):
 
     def forward(self, batch=1):
         if batch > 1:
-            return torch.cat([self() for _ in range(batch)])
+            prob, lab = [], []
+            for _ in range(batch):
+                prob1, lab1 = self()
+                prob += [prob1]
+                lab += [lab1]
+            return torch.cat(prob), torch.cat(lab)
 
         import time
         dim = len(self.shape)
@@ -96,7 +101,6 @@ class SynthSplineBlock(tnn.Module):
             return a + vector * torch.arange(n).unsqueeze(-1)
 
         start = time.time()
-        l0 = (py.prod(self.shape) ** (1 / dim))  # typical length
         curves = []
         max_radius = 0
         print(nb_trees)
@@ -105,15 +109,30 @@ class SynthSplineBlock(tnn.Module):
             # sample initial point and length
             n = 0
             while n < 3:
-                a = clamp(torch.randn([dim]) * l0)      # initial point
-                l = torch.rand([dim]) * l0              # length
-                b = clamp(a + l)                        # end point
+                side1 = torch.randint(2*dim, [])
+                a = torch.cat([torch.rand([1]) * (s-1) for s in self.shape])
+                if side1 // dim:
+                    a[side1 % dim] = 0
+                else:
+                    a[side1 % dim] = self.shape[side1 % dim] - 1
+                side2 = side1
+                while side2 == side1:
+                    side2 = torch.randint(2*dim, [])
+                b = torch.cat([torch.rand([1]) * (s-1) for s in self.shape])
+                if side2 // dim:
+                    b[side2 % dim] = 0
+                else:
+                    b[side2 % dim] = self.shape[side2 % dim] - 1
                 l = length(a, b)                        # true length
-                n = (l / 5).ceil().int().item()         # number of discrete points
+                # n = (l / 5).ceil().int().item()         # number of discrete points
+                n = torch.randint(3, (l / 5).ceil().int().clamp_min_(4), [])
 
             waypoints = linspace(a, b, n)
-            waypoints += self.tortuosity() * torch.randn([n, dim])
-            radii = self.radius() * self.radius_change([n])
+            sigma = (self.tortuosity() - 1) * l / (2 * dim * (n - 1))
+            sigma = sigma.clamp_min_(0)
+            if sigma:
+                waypoints[1:-1] += sigma * torch.randn([n-2, dim])
+            radii = self.radius() * self.radius_change([n]) / self.vx
             curve = BSplineCurve(waypoints.to(self.device),
                                  radius=radii.to(self.device))
             max_radius = max(max_radius, radii.max())
@@ -122,19 +141,38 @@ class SynthSplineBlock(tnn.Module):
 
         # draw vessels
         start = time.time()
-        true_vessels, _ = draw_curves(self.shape, curves, fast=10*max_radius)
+        true_vessels, true_labels = draw_curves(
+            self.shape, curves, fast=10*max_radius, mode='binary')
         print('draw curves: ', time.time() - start)
 
-        import matplotlib.pyplot as plt
-        plt.imshow(mip_depth(true_vessels.squeeze()))
-        plt.show()
-
-        return true_vessels[None, None]
+        return true_vessels[None, None], true_labels[None, None]
 
 
+class SynthVesselMicro(SynthSplineBlock):
+
+    def __init__(
+            self,
+            shape=(256, 256, 256),      # ~16 mm3
+            voxel_size=0.01,            # 10 mu
+            tree_density=(8, 1),        # trees/mm3
+            tortuosity=(2, 1),          # expected jitter in mm
+            radius=(0.07, 0.01),        # mean radius
+            radius_change=(1., 0.1),    # radius variation along the vessel
+            device=None):
+        super().__init__(shape, voxel_size, tree_density, tortuosity,
+                         radius, radius_change, device)
 
 
+class SynthVesselHiResMRI(SynthSplineBlock):
 
-
-
-
+    def __init__(
+            self,
+            shape=(256, 256, 256),      # ~16 mm3
+            voxel_size=0.1,             # 100 mu
+            tree_density=(0.01, 0.01),  # trees/mm3
+            tortuosity=(5, 3),          # expected jitter in mm
+            radius=(0.1, 0.02),         # mean radius
+            radius_change=(1., 0.1),    # radius variation along the vessel
+            device=None):
+        super().__init__(shape, voxel_size, tree_density, tortuosity,
+                         radius, radius_change, device)
