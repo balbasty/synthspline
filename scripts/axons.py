@@ -1,20 +1,28 @@
-from vesselsynth.synth import SynthAxon, SynthVesselHiResMRI
-import matplotlib.pyplot as plt
-from nitorch.plot.colormaps import depth_to_rgb
+from vesselsynth.synth import SynthAxon
 from nitorch import io, spatial
+import os
+from sys import argv
 
-synth = SynthAxon([128]*3)
-# synth = SynthVesselHiResMRI([128]*3)
+synth = SynthAxon([192]*3, device='cuda')
+home = os.environ.get('HOME')
+root = f'{home}/links/data/AY/synth/2022-10-03'
 
-im, lab, lvl, brch = synth()
+if len(argv) == 2:
+    start = 0
+    stop = int(argv[1])
+elif len(argv) == 3:
+    start = int(argv[1])
+    stop = int(argv[2])
+else:
+    start = 0
+    stop = 1000
 
-affine = spatial.affine_default(im.shape[-3:])
-io.savef(im.squeeze(), '/Users/yb947/Dropbox/data/axons_prob.nii.gz', affine=affine)
-io.save(lab.squeeze(), '/Users/yb947/Dropbox/data/axons_label.nii.gz', affine=affine, dtype='int32')
-io.save(lvl.squeeze(), '/Users/yb947/Dropbox/data/axons_level.nii.gz', affine=affine, dtype='uint8')
-io.save(brch.squeeze(), '/Users/yb947/Dropbox/data/axons_branch.nii.gz', affine=affine, dtype='uint8')
+for n in range(start+1, stop+1):
 
-# plt.imshow(depth_to_rgb(im.squeeze().float()))
-# plt.show()
+    im, lab, lvl, brch = synth()
+    affine = spatial.affine_default(im.shape[-3:])
 
-foo = 0
+    io.savef(im.squeeze(), f'{root}/{n:04d}_axons_prob.nii.gz', affine=affine)
+    io.save(lab.squeeze(), f'{root}/{n:04d}_axons_label.nii.gz', affine=affine, dtype='int32')
+    io.save(lvl.squeeze(), f'{root}/{n:04d}_axons_level.nii.gz', affine=affine, dtype='uint8')
+    io.save(brch.squeeze(), f'{root}/{n:04d}_axons_branch.nii.gz', affine=affine, dtype='uint8')

@@ -1,7 +1,20 @@
-from nitorch.core import py
 import torch
 from torch import distributions
 import math as pymath
+
+
+def make_list(x):
+    if not isinstance(x, (list, tuple)):
+        x = [x]
+    x = list(x)
+    return x
+
+
+def make_tuple(x):
+    if not isinstance(x, (list, tuple)):
+        x = (x,)
+    x = tuple(x)
+    return x
 
 
 def to_tensor(x):
@@ -30,6 +43,9 @@ class Sampler:
 
     def pow(self, other):
         return Op2(self, other, torch.pow)
+
+    def rpow(self, other):
+        return Op2(other, self, torch.pow)
 
     def add(self, other):
         return Op2(self, other, torch.add)
@@ -68,6 +84,9 @@ class Sampler:
         if modulo is not None:
             raise NotImplementedError('pow+modulo not implemented')
         return self.pow(other)
+
+    def __rpow__(self, other):
+        return self.rpow(other)
 
     def __add__(self, other):
         return self.add(other)
@@ -145,7 +164,7 @@ class Dirac(Sampler):
         self.mean = to_tensor(mean)
 
     def __call__(self, n=tuple()):
-        n = py.make_list(n or [])
+        n = make_tuple(n or [])
         mean = to_tensor(self.mean)
         return torch.full(n, mean) if n else mean
 
@@ -182,7 +201,7 @@ class Uniform(Sampler):
             self.sampler = Dirac(self.mean)
 
     def __call__(self, n):
-        return self.sampler(py.make_list(n or []))
+        return self.sampler(make_tuple(n or []))
 
 
 class Normal(Sampler):
@@ -196,7 +215,7 @@ class Normal(Sampler):
             self.sampler = Dirac(mean)
 
     def __call__(self, n):
-        return self.sampler(py.make_list(n or []))
+        return self.sampler(make_tuple(n or []))
 
 
 class LogNormal(Sampler):
@@ -219,4 +238,4 @@ class LogNormal(Sampler):
             self.sampler = Dirac(mean)
 
     def __call__(self, n=tuple()):
-        return self.sampler(py.make_list(n or []))
+        return self.sampler(make_tuple(n or []))

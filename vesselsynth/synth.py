@@ -1,39 +1,8 @@
 import torch
 from torch import nn as tnn
-from nitorch import nn
-from nitorch.core import py, optionals, linalg, utils
-from nitorch.spatial._curves import BSplineCurve, draw_curves
-from nitorch.spatial import identity_grid
-from torch import distributions
-import math as pymath
+from .curves import BSplineCurve, draw_curves, discretize_equidistant
 from . import random
-
-
-def _get_colormap_depth(colormap, n=256, dtype=None, device=None):
-    plt = optionals.try_import_as('matplotlib.pyplot')
-    mcolors = optionals.try_import_as('matplotlib.colors')
-    if colormap is None:
-        if not plt:
-            raise ImportError('Matplotlib not available')
-        colormap = plt.get_cmap('rainbow')
-    elif plt and isinstance(colormap, str):
-        colormap = plt.get_cmap(colormap)
-    if mcolors and isinstance(colormap, mcolors.Colormap):
-        colormap = [colormap(i/(n-1))[:3] for i in range(n)]
-    else:
-        raise ImportError('Matplotlib not available')
-    colormap = torch.as_tensor(colormap, dtype=dtype, device=device)
-    return colormap
-
-
-def mip_depth(x, dim=-1, colormap='rainbow'):
-    cmap = _get_colormap_depth(colormap, x.shape[dim],
-                               dtype=x.dtype, device=x.device)
-    x = utils.movedim(x, dim, -1)
-    d = linalg.dot(x.unsqueeze(-2), cmap.T)
-    d /= x.sum(-1, keepdim=True)
-    d *= x.max(-1, keepdim=True).values
-    return d
+from interpol import identity_grid
 
 
 def setup_sampler(value):
@@ -59,6 +28,34 @@ class SynthSplineBlock(tnn.Module):
             nb_children=random.LogNormal(5, 5),         # mean number of children
             radius_ratio=random.LogNormal(0.7, 0.1),    # Radius ratio child/parent
             device=None):
+        """
+
+        Parameters
+        ----------
+        shape : list[int]
+        voxel_size : float
+        tree_density : Sampler
+            Number of trees per mm3
+            For vessels, should be 8 (in the cortex) according to known_stats
+            Default: LogNormal(0.5, 0.5), 95% of samples in [0.6, 4.5]
+        tortuosity : Sampler
+            Tortuosity ~= cord / length
+            Default: LogNormal(0.7, 0.2), 95% of samples in [1.3, 3.0]
+        radius : Sampler
+            Mean radius at the first (coarsest) level
+            Default: LogNormal(0.07, 0.01), 95% of samples in [1.05, 1.09]
+        radius_change : Sampler
+            Radius variation along the length of the spline
+            Default : LogNormal(1., 0.1), 95% of samples in [2.2, 3.3]
+        nb_levels : Sampler
+            Number of hierarchical levels
+        nb_children :
+            Number of children per spline
+            Default: LogNormal(5, 5)
+        radius_ratio : Sampler
+            Ratio between the mean radius at child and parent levels
+            Default : LogNormal(0.7, 0.1), 95% of samples in [1.6, 2.5]
+        """
         super().__init__()
         self.shape = shape
         self.vx = voxel_size
@@ -124,8 +121,7 @@ class SynthSplineBlock(tnn.Module):
         radii = radius() / self.vx
         radii = self.radius_change([n]) * radii
         radii.clamp_min_(0.5)
-        curve = BSplineCurve(waypoints.to(self.device),
-                             radius=radii.to(self.device))
+        curve = BSplineCurve(waypoints, radius=radii)
         return curve
 
     def sample_tree(self, first=None, n_level=0, max_level=0, radius=None):
@@ -167,9 +163,12 @@ class SynthSplineBlock(tnn.Module):
         dim = len(self.shape)
 
         # sample vessels
-        volume = py.prod(self.shape) * (self.vx ** dim)
+        volume = 1
+        for s in self.shape:
+            volume *= s
+        volume *= (self.vx ** dim)
         density = self.tree_density()
-        nb_trees = int(volume * density // 1)
+        nb_trees = max(int(volume * density // 1), 1)
         print(nb_trees)
 
         start = time.time()
@@ -177,7 +176,8 @@ class SynthSplineBlock(tnn.Module):
         levels = []
         branchings = []
         for n in range(nb_trees):
-            curves1, levels1, branchings1 = self.sample_tree(max_level=self.nb_levels())
+            nb_levels = self.nb_levels()
+            curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels)
             curves += curves1
             levels += levels1
             branchings += branchings1
@@ -185,6 +185,7 @@ class SynthSplineBlock(tnn.Module):
 
         # draw vessels
         start = time.time()
+        curves = [c.to(self.device) for c in curves]
         vessels, labels = draw_curves(
             self.shape, curves, fast=True, mode='cosine')
 
@@ -192,10 +193,23 @@ class SynthSplineBlock(tnn.Module):
         for i, l in enumerate(levels):
             levelmap.masked_fill_(labels == i+1, l)
 
+        skeleton = torch.zeros_like(labels)
+        for i, curve in enumerate(curves):
+            ind = discretize_equidistant(curve, 0.1)
+            ind = ind.round().long()
+            ind = ind[(ind[:, 0] >= 0) & (ind[:, 0] < skeleton.shape[0])]
+            ind = ind[(ind[:, 1] >= 0) & (ind[:, 1] < skeleton.shape[1])]
+            ind = ind[(ind[:, 2] >= 0) & (ind[:, 2] < skeleton.shape[2])]
+            ind = ind[:, 2] \
+                + ind[:, 1] * skeleton.shape[2] \
+                + ind[:, 0] * skeleton.shape[2] * skeleton.shape[1]
+            skeleton.view([-1])[ind] = i+1
+
         branchmap = torch.zeros_like(vessels)
         id = identity_grid(branchmap.shape, device=branchmap.device)
         for branch in branchings:
             loc, radius = branch
+            loc = loc.to(id)
             mask = (id - loc).square_().sum(-1).sqrt_() < radius + 0.5
             if mask.any():
                 branchmap.masked_fill_(mask, True)
@@ -210,7 +224,8 @@ class SynthSplineBlock(tnn.Module):
         labels = labels[None, None]
         levelmap = levelmap[None, None]
         branchmap = branchmap[None, None]
-        return vessels, labels, levelmap, branchmap
+        skeleton = skeleton[None, None]
+        return vessels, labels, levelmap, branchmap, skeleton
 
 
 class SynthVesselMicro(SynthSplineBlock):
@@ -246,6 +261,81 @@ class SynthVesselHiResMRI(SynthSplineBlock):
             nb_children=random.LogNormal(5, 5),         # mean number of children
             radius_ratio=random.LogNormal(0.7, 0.1),    # Radius ratio child/parent
             device=None):
+        """
+
+        Parameters
+        ----------
+        shape : list[int], default=256
+        voxel_size : float, default=0.1
+        tree_density : Sampler
+            Number of trees per mm3
+            For vessels, should be 8 (in the cortex) according to known_stats
+            Default: LogNormal(0.01, 0.01), 95% of samples in [0.99, 1.03]
+        tortuosity : Sampler
+            Expected jitter, in mm
+            Default: LogNormal(5, 3), 95% of samples in [1.3, 60E3]
+        radius : Sampler
+            Mean radius at the first (coarsest) level
+            Default: LogNormal(0.1, 0.02), 95% of samples in [1.06, 1.15]
+        radius_change : Sampler
+            Radius variation along the length of the spline
+            Default : LogNormal(1., 0.1), 95% of samples in [2.2, 3.3]
+        nb_levels : Sampler, default=2
+            Number of hierarchical levels
+        nb_children :
+            Number of children per spline
+            Default: LogNormal(5, 5)
+        radius_ratio : Sampler
+            Ratio between the mean radius at child and parent levels
+            Default : LogNormal(0.7, 0.1), 95% of samples in [1.6, 2.5]
+        """
+        super().__init__(shape, voxel_size, tree_density, tortuosity,
+                         radius, radius_change, nb_levels, nb_children,
+                         radius_ratio, device)
+
+
+class SynthVesselOCT(SynthSplineBlock):
+
+    def __init__(
+            self,
+            shape=(128, 128, 128),                      # ~0.2 mm3
+            voxel_size=0.05,                            # 50 mu
+            tree_density=random.LogNormal(0.01, 0.01),  # trees/mm3
+            tortuosity=random.LogNormal(5, 3),          # expected jitter in mm
+            radius=random.LogNormal(0.1, 0.02),         # mean radius
+            radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
+            nb_levels=4,                                # number of hierarchical level in the tree
+            nb_children=random.LogNormal(5, 5),         # mean number of children
+            radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
+            device=None):
+        """
+
+        Parameters
+        ----------
+        shape : list[int], default=256
+        voxel_size : float, default=0.1
+        tree_density : Sampler
+            Number of trees per mm3
+            For vessels, should be 8 (in the cortex) according to known_stats
+            Default: LogNormal(0.01, 0.01), 95% of samples in [0.99, 1.03]
+        tortuosity : Sampler
+            Expected jitter, in mm
+            Default: LogNormal(5, 3), 95% of samples in [1.3, 60E3]
+        radius : Sampler
+            Mean radius at the first (coarsest) level
+            Default: LogNormal(0.1, 0.02), 95% of samples in [1.06, 1.15]
+        radius_change : Sampler
+            Radius variation along the length of the spline
+            Default : LogNormal(1., 0.1), 95% of samples in [2.2, 3.3]
+        nb_levels : Sampler, default=2
+            Number of hierarchical levels
+        nb_children :
+            Number of children per spline
+            Default: LogNormal(5, 5)
+        radius_ratio : Sampler
+            Ratio between the mean radius at child and parent levels
+            Default : LogNormal(0.7, 0.1), 95% of samples in [1.6, 2.5]
+        """
         super().__init__(shape, voxel_size, tree_density, tortuosity,
                          radius, radius_change, nb_levels, nb_children,
                          radius_ratio, device)
@@ -256,14 +346,14 @@ class SynthAxon(SynthSplineBlock):
     def __init__(
             self,
             shape=(256, 256, 256),
-            voxel_size=1e-3,                            # 1 mu
-            axon_density=random.LogNormal(3e4, 5e3),    # axons/mm3
-            tortuosity=random.LogNormal(1.1, 2),        # expected jitter in mm
-            radius=random.LogNormal(1e-3, 2e-4).clamp_max(2e-3),  # mean radius in mm
-            radius_change=random.LogNormal(1., 0.1),    # radius variation along the axon
-            nb_levels=2,                                # number of hierarchical level in the tree
-            nb_children=random.LogNormal(0.5, 1),       # mean number of children
-            radius_ratio=random.LogNormal(1, 0.1),      # Radius ratio child/parent
+            voxel_size=1e-3,                             # 1 mu
+            axon_density=random.Uniform(4, 6).rpow(10),  # axons/mm3
+            tortuosity=random.LogNormal(1.1, 2),         # expected jitter in mm
+            radius=random.LogNormal(1e-3, 5e-4).clamp_max(2e-3),  # mean radius in mm
+            radius_change=random.LogNormal(1., 0.1),     # radius variation along the axon
+            nb_levels=2,                                 # number of hierarchical level in the tree
+            nb_children=random.LogNormal(0.5, 1),        # mean number of children
+            radius_ratio=random.LogNormal(1, 0.1),       # Radius ratio child/parent
             device=None):
         super().__init__(shape, voxel_size, axon_density, tortuosity,
                          radius, radius_change, nb_levels, nb_children,
