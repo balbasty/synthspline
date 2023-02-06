@@ -170,10 +170,11 @@ class Dirac(Sampler): #A fixed parameter distribution class with a single mode a
 
 
 class Uniform(Sampler):
+    '''Generates a uniform distrobution using either the mean, fwhm, min, or max. Returns either PyTorch uniform distribution with the specified bounds or to a Dirac distribution with the specified mean'''
     def __init__(self, *args, **kwargs):
-        if 'mean' in kwargs:
+        if 'mean' in kwargs: # If we have a mean, set the self.mean to it and we're done
             self.mean = to_tensor(kwargs['mean'])
-            if 'fwhm' in kwargs:
+            if 'fwhm' in kwargs: # The full width at half maximum (https://en.wikipedia.org/wiki/Full_width_at_half_maximum)
                 self.fwhm = to_tensor(kwargs['fwhm'])
                 self.scale = self.fwhm / pymath.sqrt(12)
             else:
@@ -220,14 +221,14 @@ class Normal(Sampler):
 
 class LogNormal(Sampler): # Define a class LogNormal that inherits from Sampler
 
-    def __init__(self, mean, scale=0): # Define the constructor with arguments mean and scale
-        self.mean = to_tensor(mean) # Convert mean to tensor
-        self.scale = to_tensor(scale) # Convert scale to tensor
+    def __init__(self, mean, scale=0): # Define the constructor with arguments mean and scale, convert to tensors
+        self.mean = to_tensor(mean)
+        self.scale = to_tensor(scale)
         if self.scale: # If scale is not zero
             var = self.scale * self.scale # Calculate the variance
             var_log = (1 + var / self.mean.square()).log().clamp_min(0) # Clamp the log of the variance to zero # Calculating the log of the variance using this math https://en.wikipedia.org/wiki/Log-normal_distribution.
             if not var_log: # if it's zero
-                self.sampler = Dirac(mean) # The sampler is a  
+                self.sampler = Dirac(mean) # The sampler is a
             else: 
                 mean_log = self.mean.log() - var_log / 2
                 scale_log = var_log.sqrt()

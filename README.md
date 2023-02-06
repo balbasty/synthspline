@@ -26,3 +26,24 @@ Synthetized brain vessels for NN pretraining
 # `Dirac` Class (inherits from `Sampler`)
 - The Dirac class is a simple fixed-parameter distribution that always **returns a tensor** with the same value, specified by the **mean** parameter passed to the constructor. The `__call__` method allows the object to be used as a function, allowing it to return tensors with **different shapes** if required.
 - Returns either mean, or a tensor filled with mean
+
+
+# random.py
+
+- Defines statistical distrobutions (Dirac, Uniform, Normal, and Log-Normal)
+  - All distrobutions inherit from Sampler class
+
+## Dirac(Sampler)
+- Input: mean (of distrobution)
+- Returns a fixed paramater distrobution centered around the mean
+
+## Uniform(Sampler)
+- Input: Takes mean, fwhm, min, or max
+- Returns a uniform distrobution using either the mean and full width @ half maximum, or bounded by min and max
+
+## Normal(Sampler)
+- Input: mean or mean and scale
+- If given mean and scale, returns normal distrobution
+- If given just mean, returns Dirac distrobution about the mean
+
+## LogNormal(Sampler)

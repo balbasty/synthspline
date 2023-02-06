@@ -9,7 +9,7 @@ def setup_sampler(value):
     if isinstance(value, random.Sampler):  # Check if value is an instance of the random.Sampler class
         return value # If yes, return as is
     elif not isinstance(value, (list, tuple)): # Check if value is NOT an instance of a list or tuple
-        return random.Dirac(value) # Return random.Dirac object if not a list or tuple
+        return random.Dirac(value) # If not a list or tuple, return a fixed parameter distribution with single mode at value
     else: # If it IS a list or a tuple
         return random.Uniform(*value) # Return a random.Uniform object with value as its arguments (unpacked using the * operator)
 

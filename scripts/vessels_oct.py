@@ -85,7 +85,7 @@ os.makedirs(root, exist_ok=True)
 for n in range(start+1, stop+1):
 
     im, lab, lvl, brch, skl = synth()
-    affine = spatial.affine_default(im.shape[-3:])
+    affine = spatial.affine_default(im.shape[-3:]) # apply a linear rotation
 
     io.savef(im.squeeze(), f'{root}/{n:04d}_vessels_prob.nii.gz', affine=affine)
     io.save(lab.squeeze(), f'{root}/{n:04d}_vessels_label.nii.gz', affine=affine, dtype='int32')
