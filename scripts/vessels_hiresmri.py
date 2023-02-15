@@ -84,11 +84,12 @@ synth = SynthVesselHiResMRI(shape, device=device)
 os.makedirs(root, exist_ok=True)
 for n in range(start+1, stop+1):
 
-    im, lab, lvl, brch, skl = synth()
+    im, lab, lvl, nlvl, brch, skl = synth()
     affine = spatial.affine_default(im.shape[-3:])
 
     io.savef(im.squeeze(), f'{root}/{n:04d}_vessels_prob.nii.gz', affine=affine)
     io.save(lab.squeeze(), f'{root}/{n:04d}_vessels_label.nii.gz', affine=affine, dtype='int32')
     io.save(lvl.squeeze(), f'{root}/{n:04d}_vessels_level.nii.gz', affine=affine, dtype='uint8')
+    io.save(nlvl.squeeze(), f'{root}/{n:04d}_vessels_nblevels.nii.gz', affine=affine, dtype='uint8')
     io.save(brch.squeeze(), f'{root}/{n:04d}_vessels_branch.nii.gz', affine=affine, dtype='uint8')
     io.save(skl.squeeze(), f'{root}/{n:04d}_vessels_skeleton.nii.gz', affine=affine, dtype='uint8')

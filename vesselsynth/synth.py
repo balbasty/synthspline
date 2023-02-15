@@ -175,9 +175,11 @@ class SynthSplineBlock(tnn.Module):
         curves = []
         levels = []
         branchings = []
+        nb_levels = []
         for n in range(nb_trees):
-            nb_levels = self.nb_levels()
-            curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels)
+            nb_levels1 = self.nb_levels()
+            curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels1)
+            nb_levels += [max(levels1)] * len(curves1)
             curves += curves1
             levels += levels1
             branchings += branchings1
@@ -192,6 +194,10 @@ class SynthSplineBlock(tnn.Module):
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):
             levelmap.masked_fill_(labels == i+1, l)
+
+        nblevelmap = torch.zeros_like(labels)
+        for i, l in enumerate(nb_levels):
+            nblevelmap.masked_fill_(labels == i+1, l)
 
         skeleton = torch.zeros_like(labels)
         for i, curve in enumerate(curves):
@@ -225,7 +231,7 @@ class SynthSplineBlock(tnn.Module):
         levelmap = levelmap[None, None]
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
-        return vessels, labels, levelmap, branchmap, skeleton
+        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton
 
 
 class SynthVesselMicro(SynthSplineBlock):
