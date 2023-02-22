@@ -12,8 +12,8 @@ interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-# root = f'{home}/links/data/vessels/synth_new/oct/230123'
-root = '/tmp'
+root = "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/data"
+# root = '/tmp'
 device = 'cuda'
 shape = 128
 start = 0
