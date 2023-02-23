@@ -305,15 +305,16 @@ class SynthVesselOCT(SynthSplineBlock):
     def __init__(
             self,
             shape=(128, 128, 128),                      # ~0.2 mm3
-            voxel_size=0.05,                            # 50 mu
+            voxel_size=0.01,                            # 10 um
             tree_density=random.LogNormal(0.01, 0.01),  # trees/mm3
-            tortuosity=random.LogNormal(5, 3),          # expected jitter in mm
+            tortuosity=random.LogNormal(1.5, 5),        # expected jitter in mm
             radius=random.LogNormal(0.1, 0.02),         # mean radius
             radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
             nb_levels=4,                                # number of hierarchical level in the tree
             nb_children=random.LogNormal(5, 5),         # mean number of children
             radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
             device=None):
+
         """
 
         Parameters
