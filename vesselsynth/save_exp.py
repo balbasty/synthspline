@@ -20,6 +20,11 @@ def expDocumentation():
     exp_dir = nextExpDir()
     exp_documentation_abs_path = f"{exp_dir}/experiment_documentation.md"
     file_obj = open(exp_documentation_abs_path, "x")
-    file_obj.write("Experiment Title: \n\nDate: \n\nObjective: \n\nNotes: ")
+
+    date = datetime.date.today()
+    file_obj.write(f"# Experiment Title: \n\n# Date: {date}\n\n# Objective:\n- \n\n# Notes:\n-  ")
     file_obj.close()
+
+    print('\n','#' * 30, f'\n\n SAVING TO: {exp_dir}\n\n','#' * 30,'\n')
+
     return exp_dir

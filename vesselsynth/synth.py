@@ -228,7 +228,7 @@ class SynthSplineBlock(tnn.Module):
 
         vessels = vessels[None, None]
         labels = labels[None, None]
-        levelmap = levelmap[None, None]
+        nblevelmap = nblevelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None] 
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
         return vessels, labels, levelmap, nblevelmap, branchmap, skeleton
