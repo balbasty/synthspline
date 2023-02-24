@@ -7,12 +7,15 @@ import os
 from sys import argv
 import torch
 
+sys.path.append("/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/")
+from save_exp import expDocumentation
+
 # Use faster jitfield backend to compute splines
 interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/data"
+root = expDocumentation()
 # root = '/tmp'
 device = 'cuda'
 shape = 128
@@ -86,14 +89,9 @@ synth = SynthVesselOCT(shape, device=device)
 os.makedirs(root, exist_ok=True)
 for n in range(start+1, stop+1):
 
-<<<<<<< HEAD
     im, lab, lvl, nlvl, brch, skl = synth()
     affine = default_affine(im.shape[-3:])
     h = nib.Nifti1Header()
-=======
-    im, lab, lvl, brch, skl = synth()
-    affine = spatial.affine_default(im.shape[-3:]) # apply a linear rotation
->>>>>>> d621c0e90ea159d741e607e4f147085ac1993c09
 
     nib.save(nib.Nifti1Image(im.squeeze().cpu().numpy(), affine, h),
              f'{root}/{n:04d}_vessels_prob.nii.gz')
