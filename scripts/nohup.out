@@ -1,0 +1,69 @@
+WARNING:root:nitorch uses its non-compiled backend (TS). Some algorithms may be slow.
+WARNING:root:nitorch uses its non-compiled backend (TS). Some algorithms may be slow.
+
+ ############################## 
+
+ SAVING TO: /autofs/cluster/octdata3/users/epc28/data/exp6
+
+ ############################## 
+
+CUDA not available, using CPU.
+1
+sample curves:  0.40621280670166016
+001/023002/023003/023004/023005/023006/023007/023008/023009/023010/023011/023012/023013/023014/023015/023016/023017/023018/023019/023020/023021/023022/023023/023
+draw curves:  169.2306685447693
+1
+sample curves:  0.047679901123046875
+001/022002/022003/022004/022005/022006/022007/022008/022009/022010/022011/022012/022013/022014/022015/022016/022017/022018/022019/022Traceback (most recent call last):
+  File "vessels_oct.py", line 92, in <module>
+    im, lab, lvl, nlvl, brch, skl = synth()
+  File "/autofs/cluster/octdata3/users/epc28/miniconda3/envs/vesselseg/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1194, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/synth.py", line 191, in forward
+    vessels, labels = draw_curves(
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 547, in draw_curves
+    return draw_curves_prob(shape, curves, fast, mode, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 552, in draw_curves_prob
+    return draw_curves_prob_fast(shape, curves, fast, mode, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 604, in draw_curves_prob_fast
+    time, dist = min_dist(sublocations, curve, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 230, in min_dist
+    return min_dist_gn(x, s, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 415, in min_dist_gn
+    d = s.eval_position(t).sub_(x)
+  File "/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/curves.py", line 115, in eval_position
+    x = grid_pull(y, t, interpolation=self.order, bound=self.bound)
+  File "/autofs/cluster/octdata3/users/epc28/miniconda3/envs/vesselseg/lib/python3.8/site-packages/interpol/api.py", line 198, in grid_pull
+    out = GridPull.apply(input, grid, interpolation, bound, extrapolate)
+  File "/autofs/cluster/octdata3/users/epc28/miniconda3/envs/vesselseg/lib/python3.8/site-packages/torch/cuda/amp/autocast_mode.py", line 105, in decorate_fwd
+    return fwd(*args, **kwargs)
+  File "/autofs/cluster/octdata3/users/epc28/miniconda3/envs/vesselseg/lib/python3.8/site-packages/interpol/autograd.py", line 137, in forward
+    output = grid_pull(input, grid, *opt)
+  File "/autofs/cluster/octdata3/users/epc28/miniconda3/envs/vesselseg/lib/python3.8/site-packages/interpol/pushpull.py", line 66, in grid_pull
+    return nd.pull(inp, grid, bound_fn, spline_fn, extrapolate)
+KeyboardInterrupt
+WARNING:root:nitorch uses its non-compiled backend (TS). Some algorithms may be slow.
+
+ ############################## 
+
+ SAVING TO: /autofs/cluster/octdata3/users/epc28/data/exp7
+
+ ############################## 
+
+Traceback (most recent call last):
+  File "vessels_oct.py", line 53, in <module>
+    stop = int(positionals.pop(0))
+ValueError: invalid literal for int() with base 10: 'out.txt'
+WARNING:root:nitorch uses its non-compiled backend (TS). Some algorithms may be slow.
+
+ ############################## 
+
+ SAVING TO: /autofs/cluster/octdata3/users/epc28/data/exp8
+
+ ############################## 
+
+Traceback (most recent call last):
+  File "vessels_oct.py", line 53, in <module>
+    stop = int(positionals.pop(0))
+ValueError: invalid literal for int() with base 10: 'out.txt'
+WARNING:root:nitorch uses its non-compiled backend (TS). Some algorithms may be slow.
