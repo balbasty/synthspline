@@ -8,14 +8,14 @@ from sys import argv
 import torch
 
 sys.path.append("/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/")
-from save_exp import expDocumentation
+from save_exp import SaveExp
 
 # Use faster jitfield backend to compute splines
 interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = expDocumentation()
+root = SaveExp('/autofs/cluster/octdata3/users/epc28/data/').main()
 # root = '/tmp'
 device = 'cuda'
 shape = 128

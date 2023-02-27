@@ -18,7 +18,7 @@ class SynthSplineBlock(tnn.Module):
 
     def __init__(
             self,
-            shape,
+            shape,                                      # default to 128, size of image
             voxel_size=0.1,                             # 100 mu
             tree_density=random.LogNormal(0.5, 0.5),    # trees/mm3 (should be 8 according to known_stats)
             tortuosity=random.LogNormal(0.7, 0.2),      # expected jitter in mm
@@ -71,6 +71,7 @@ class SynthSplineBlock(tnn.Module):
     def sample_curve(self, first=None, last=None, radius=None):
 
         dim = len(self.shape)
+        
         def length(a, b):
             return (a-b).square().sum().sqrt()
 
@@ -85,9 +86,9 @@ class SynthSplineBlock(tnn.Module):
             # sample initial point
             if first is None:
                 side1 = torch.randint(2 * dim, [])
-                a = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape])
-                if side1 // dim:
-                    a[side1 % dim] = 0
+                a = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape]) # getting coordinates for each dimension and concatenating them to a single tensor
+                if side1 // dim: # if the side is bigger than the dimension (3)
+                    a[side1 % dim] = 0 
                 else:
                     a[side1 % dim] = self.shape[side1 % dim] - 1
                 side2 = side1
@@ -109,14 +110,14 @@ class SynthSplineBlock(tnn.Module):
 
             # initial straight line
             l = length(a, b)  # true length
-            n = torch.randint(3, (l / 5).ceil().int().clamp_min_(4), [])
+            n = torch.randint(3, (l / 5).ceil().int().clamp_min_(4), []) # number of points in spline, min number of points is 3. Not sure we div by 5 (5 px / point)
 
         # deform curve + sample radius
-        waypoints = linspace(a, b, n)
+        waypoints = linspace(a, b, n)   # make set of n points connecting a and b
         sigma = (self.tortuosity() - 1) * l / (2 * dim * (n - 1))
         sigma = sigma.clamp_min_(0)
         if sigma:
-            waypoints[1:-1] += sigma * torch.randn([n - 2, dim])
+            waypoints[1:-1] += sigma * torch.randn([n - 2, dim]) # applying tortuosity manipulation to all points besides points a (waypoints[1]) and b (waypoints[-1])
         radius = radius or self.radius
         radii = radius() / self.vx
         radii = self.radius_change([n]) * radii
