@@ -19,7 +19,7 @@ class SynthSplineBlock(tnn.Module):
     def __init__(
             self,
             shape,                                      # default to 128, size of image
-            voxel_size=0.1,                             # 100 mu
+            voxel_size=0.1,                             # 0.1 mm = 100 mu --> needs to have the same units as spatial dimension of tree_density
             tree_density=random.LogNormal(0.5, 0.5),    # trees/mm3 (should be 8 according to known_stats)
             tortuosity=random.LogNormal(0.7, 0.2),      # expected jitter in mm
             radius=random.LogNormal(0.07, 0.01),        # mean radius
@@ -76,6 +76,7 @@ class SynthSplineBlock(tnn.Module):
             return (a-b).square().sum().sqrt()
 
         def linspace(a, b, n):
+            '''Makes vectors on range [a, b] with n steps'''
             vector = (b-a) / (n-1)
             return a + vector * torch.arange(n).unsqueeze(-1)
 
@@ -84,13 +85,13 @@ class SynthSplineBlock(tnn.Module):
         while n < 3:
 
             # sample initial point
-            if first is None:
+            if first is None: # Sanity check: generates point if not given
                 side1 = torch.randint(2 * dim, [])
-                a = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape]) # getting coordinates for each dimension and concatenating them to a single tensor
-                if side1 // dim: # if the side is bigger than the dimension (3)
-                    a[side1 % dim] = 0 
+                a = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape]) # generate random point a on random coordinate betweem [0, 0, 0] and [127, 127, 127]
+                if side1 // dim:
+                    a[side1 % dim] = 0 # set the coordinate in that dimension to 0 
                 else:
-                    a[side1 % dim] = self.shape[side1 % dim] - 1
+                    a[side1 % dim] = self.shape[side1 % dim] - 1 # set the coordinate in that dimension to 127 (max)
                 side2 = side1
                 while side2 == side1:
                     side2 = torch.randint(2 * dim, [])
@@ -113,14 +114,14 @@ class SynthSplineBlock(tnn.Module):
             n = torch.randint(3, (l / 5).ceil().int().clamp_min_(4), []) # number of points in spline, min number of points is 3. Not sure we div by 5 (5 px / point)
 
         # deform curve + sample radius
-        waypoints = linspace(a, b, n)   # make set of n points connecting a and b
-        sigma = (self.tortuosity() - 1) * l / (2 * dim * (n - 1))
+        waypoints = linspace(a, b, n)   # make vectors on range [a, b] with n steps
+        sigma = (self.tortuosity() - 1) * l / (2 * dim * (n - 1)) # distort vectors according to sampled tortuosity
         sigma = sigma.clamp_min_(0)
         if sigma:
             waypoints[1:-1] += sigma * torch.randn([n - 2, dim]) # applying tortuosity manipulation to all points besides points a (waypoints[1]) and b (waypoints[-1])
         radius = radius or self.radius
         radii = radius() / self.vx
-        radii = self.radius_change([n]) * radii
+        radii = self.radius_change([n]) * radii # why are we putting the number of points into the uniform sampler? Won't this just create a distrobution around n??
         radii.clamp_min_(0.5)
         curve = BSplineCurve(waypoints, radius=radii)
         return curve
@@ -130,6 +131,7 @@ class SynthSplineBlock(tnn.Module):
         root = self.sample_curve(first, radius=radius)
         curves = [root]
         levels = [n_level+1]
+
         if n_level >= max_level - 1:
             return curves, levels, []
 
@@ -161,7 +163,7 @@ class SynthSplineBlock(tnn.Module):
             return torch.cat(prob), torch.cat(lab)
 
         import time
-        dim = len(self.shape)
+        dim = len(self.shape) # [128, 128, 128]
 
         # sample vessels
         volume = 1
@@ -170,7 +172,7 @@ class SynthSplineBlock(tnn.Module):
         volume *= (self.vx ** dim)
         density = self.tree_density()
         nb_trees = max(int(volume * density // 1), 1)
-        print(nb_trees)
+        print(f"number of trees: {nb_trees}")
 
         start = time.time()
         curves = []
@@ -190,7 +192,7 @@ class SynthSplineBlock(tnn.Module):
         start = time.time()
         curves = [c.to(self.device) for c in curves]
         vessels, labels = draw_curves(
-            self.shape, curves, fast=True, mode='cosine')
+            self.shape, curves, fast=True, mode='cosine') # sum prob, label
 
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):
@@ -229,7 +231,7 @@ class SynthSplineBlock(tnn.Module):
 
         vessels = vessels[None, None]
         labels = labels[None, None]
-        nblevelmap = nblevelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None] 
+        levelmap = levelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None] 
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
         return vessels, labels, levelmap, nblevelmap, branchmap, skeleton

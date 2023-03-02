@@ -1,4 +1,7 @@
 import sys
+sys.path.append("../vesselsynth/")
+sys.path.append("../vesselsynth/vesselsynth/")
+
 import interpol
 from vesselsynth.synth import SynthVesselOCT
 from vesselsynth.io import default_affine
@@ -6,8 +9,6 @@ import nibabel as nib
 import os
 from sys import argv
 import torch
-
-sys.path.append("/autofs/cluster/octdata3/users/epc28/scripts/vesselsynth/vesselsynth/")
 from save_exp import SaveExp
 
 # Use faster jitfield backend to compute splines
@@ -15,7 +16,7 @@ interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = SaveExp('/autofs/cluster/octdata3/users/epc28/data/').main()
+root = SaveExp('../data').main()
 # root = '/tmp'
 device = 'cuda'
 shape = 128
