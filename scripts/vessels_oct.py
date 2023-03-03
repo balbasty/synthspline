@@ -16,7 +16,7 @@ interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = SaveExp('../data').main()
+root = SaveExp('/home/epc-ubuntu/UBUNTU').main()
 # root = '/tmp'
 device = 'cuda'
 shape = 128
@@ -83,12 +83,14 @@ if device.type == 'cuda' and not torch.cuda.is_available():
     print('CUDA not available, using CPU.')
     device = 'cpu'
 
-# setup synthesizer
-synth = SynthVesselOCT(shape, device=device)
+
 
 # synth
 os.makedirs(root, exist_ok=True)
 for n in range(start+1, stop+1):
+
+    # setup synthesizer
+    synth = SynthVesselOCT(shape, device=device)
 
     im, lab, lvl, nlvl, brch, skl = synth()
     affine = default_affine(im.shape[-3:])

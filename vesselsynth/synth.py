@@ -138,6 +138,9 @@ class SynthSplineBlock(tnn.Module):
         nb_children = self.nb_children().floor().int()
         branchings = []
         for c in range(nb_children):
+            #MAX = torch.randint(1, 6, [])
+            #print(MAX)
+
             t = torch.rand([])
             first = root.eval_position(t)
             root_radius = root.eval_radius(t)
@@ -171,7 +174,7 @@ class SynthSplineBlock(tnn.Module):
             volume *= s
         volume *= (self.vx ** dim)
         density = self.tree_density()
-        nb_trees = max(int(volume * density // 1), 1)
+        nb_trees = 4 #max(int(volume * density // 1), 1)
         print(f"number of trees: {nb_trees}")
 
         start = time.time()
@@ -179,8 +182,10 @@ class SynthSplineBlock(tnn.Module):
         levels = []
         branchings = []
         nb_levels = []
+        print(nb_trees)
         for n in range(nb_trees):
-            nb_levels1 = self.nb_levels()
+            nb_levels1 = self.nb_levels() #torch.randint(2, 6, []) #self.nb_levels()
+            print("nb_levels1: ", nb_levels1)
             curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels1)
             nb_levels += [max(levels1)] * len(curves1)
             curves += curves1
@@ -313,8 +318,8 @@ class SynthVesselOCT(SynthSplineBlock):
             tortuosity=random.LogNormal(1.5, 5),        # expected jitter in mm
             radius=random.LogNormal(0.1, 0.02),         # mean radius
             radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
-            nb_levels=4,                                # number of hierarchical level in the tree
-            nb_children=random.LogNormal(5, 5),         # mean number of children
+            nb_levels= random.LogNormal(3, 2), #4,      # number of hierarchical level in the tree
+            nb_children= 2, #random.LogNormal(5, 5),    # mean number of children
             radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
             device=None):
 
