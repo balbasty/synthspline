@@ -71,7 +71,7 @@ class SynthSplineBlock(tnn.Module):
     def sample_curve(self, first=None, last=None, radius=None):
 
         dim = len(self.shape)
-        
+
         def length(a, b):
             return (a-b).square().sum().sqrt()
 
@@ -89,7 +89,7 @@ class SynthSplineBlock(tnn.Module):
                 side1 = torch.randint(2 * dim, [])
                 a = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape]) # generate random point a on random coordinate betweem [0, 0, 0] and [127, 127, 127]
                 if side1 // dim:
-                    a[side1 % dim] = 0 # set the coordinate in that dimension to 0 
+                    a[side1 % dim] = 0 # set the coordinate in that dimension to 0
                 else:
                     a[side1 % dim] = self.shape[side1 % dim] - 1 # set the coordinate in that dimension to 127 (max)
                 side2 = side1
@@ -184,7 +184,7 @@ class SynthSplineBlock(tnn.Module):
         nb_levels = []
         print(nb_trees)
         for n in range(nb_trees):
-            nb_levels1 = self.nb_levels() #torch.randint(2, 6, []) #self.nb_levels()
+            nb_levels1 = torch.randint(1, 6, []) #self.nb_levels() #torch.randint(2, 6, [])
             print("nb_levels1: ", nb_levels1)
             curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels1)
             nb_levels += [max(levels1)] * len(curves1)
@@ -236,7 +236,7 @@ class SynthSplineBlock(tnn.Module):
 
         vessels = vessels[None, None]
         labels = labels[None, None]
-        levelmap = levelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None] 
+        levelmap = levelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None]
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
         return vessels, labels, levelmap, nblevelmap, branchmap, skeleton

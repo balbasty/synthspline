@@ -229,7 +229,7 @@ class LogNormal(Sampler): # Define a class LogNormal that inherits from Sampler
             var_log = (1 + var / self.mean.square()).log().clamp_min(0) # Clamp the log of the variance to zero # Calculating the log of the variance using this math https://en.wikipedia.org/wiki/Log-normal_distribution.
             if not var_log: # if it's zero
                 self.sampler = Dirac(mean) # The sampler is a
-            else: 
+            else:
                 mean_log = self.mean.log() - var_log / 2
                 scale_log = var_log.sqrt()
                 self.mean_log = mean_log
