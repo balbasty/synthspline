@@ -1,7 +1,7 @@
 import nibabel.freesurfer.io as fsio
-from nitorch.io.transforms import conversions
-import nitorch.core.dtypes as ni_dtype
-from nitorch import spatial
+#from nitorch.io.transforms import conversions
+#import nitorch.core.dtypes as ni_dtype
+#from nitorch import spatial
 import torch
 
 

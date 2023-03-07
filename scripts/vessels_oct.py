@@ -16,7 +16,7 @@ interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = SaveExp('/home/epc-ubuntu/UBUNTU').main()
+root = SaveExp('/autofs/cluster/octdata3/users/epc28/data').main()
 # root = '/tmp'
 device = 'cuda'
 shape = 128
