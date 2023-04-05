@@ -101,6 +101,7 @@ for n in range(start+1, stop+1):
              f'{root}/{n:04d}_vessels_prob.nii.gz')
 
     h.set_data_dtype('int32')
+    lab[lab >= 1] = 1
     nib.save(nib.Nifti1Image(lab.squeeze().cpu().numpy(), affine, h),
              f'{root}/{n:04d}_vessels_label.nii.gz')
 

@@ -236,7 +236,7 @@ class SynthSplineBlock(tnn.Module):
 
         vessels = vessels[None, None]
         labels = labels[None, None]
-        levelmap = levelmap[None, None]                                                 # I think I should change this to nblevelmap = nblevelmap[None, None]
+        levelmap = levelmap[None, None]                                                 # I want this to be a binary mask. Binary masks are needed for the training of the unet
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
         return vessels, labels, levelmap, nblevelmap, branchmap, skeleton
