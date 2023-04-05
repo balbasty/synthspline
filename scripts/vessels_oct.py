@@ -16,8 +16,9 @@ interpol.backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
-root = SaveExp('/autofs/cluster/octdata3/users/epc28/data').main()
-# root = '/tmp'
+
+# This is the only place we need to change any kind of path to customize the script for our applications
+root = SaveExp('/home/epc-ubuntu/UBUNTU/vesselsynth/data').main()
 device = 'cuda'
 shape = 128
 start = 0

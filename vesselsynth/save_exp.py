@@ -55,7 +55,7 @@ class SaveExp(object):
         # get the path and name of the new experiment directory
         exp_abs_path, exp_dir_name = self.nextDir() 
         # create the path and name of the documentation file
-        exp_documentation_abs_path = f"{exp_abs_path}/{exp_dir_name}_documentation.docx" 
+        exp_documentation_abs_path = f"{exp_abs_path}/{exp_dir_name}_documentation.txt" 
         date = datetime.date.today()
 
         # create the documentation file and write the initial content
