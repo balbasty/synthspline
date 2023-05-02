@@ -174,7 +174,7 @@ class SynthSplineBlock(tnn.Module):
             volume *= s
         volume *= (self.vx ** dim)
         density = self.tree_density()
-        nb_trees = 4 #max(int(volume * density // 1), 1)
+        nb_trees = 1 #max(int(volume * density // 1), 1)
         print(f"number of trees: {nb_trees}")
 
         start = time.time()

@@ -18,11 +18,13 @@ interpol.backend.jitfields = True
 home = os.environ.get('HOME')
 
 # This is the only place we need to change any kind of path to customize the script for our applications
-root = SaveExp('/home/epc-ubuntu/UBUNTU/vesselsynth/data').main()
+#root = SaveExp('/home/epc-ubuntu/UBUNTU/vesselsynth/data').main()
+root = SaveExp('data').main()
+
 device = 'cuda'
-shape = 128
+shape = 32
 start = 0
-stop = 1000
+stop = 20
 
 help = f"""
 python <path_to_script.py> [[<first>] <last>] [-o <output>] [-d <device>] [-s <shape]
@@ -101,7 +103,7 @@ for n in range(start+1, stop+1):
              f'{root}/{n:04d}_vessels_prob.nii.gz')
 
     h.set_data_dtype('int32')
-    lab[lab >= 1] = 1
+    #lab[lab >= 1] = 1
     nib.save(nib.Nifti1Image(lab.squeeze().cpu().numpy(), affine, h),
              f'{root}/{n:04d}_vessels_label.nii.gz')
 
