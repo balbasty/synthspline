@@ -1,0 +1,13 @@
+{
+"output_path": "/autofs/cluster/octdata2/users/epc28/ml_vesselseg/vesselsynth/data/exp0003",
+"n_volumes": 20,
+"shape": 32,
+"voxel_size": 0.01,
+"tree_density": [0.0025, 0.01],
+"tortuosity": [1.5, 5],
+"radius": [0.1, 0.02],
+"radius_change": [1, 0.2],
+"nb_levels": [3, 2],
+"nb_children": [3, 0.5],
+"radius_ratio": [0.5, 0.1]
+}

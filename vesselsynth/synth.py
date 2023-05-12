@@ -1,9 +1,13 @@
+import json
 import torch
-from torch import nn as tnn
-from .curves import BSplineCurve, draw_curves, discretize_equidistant
-from . import random
 from interpol import identity_grid
+from torch import nn as tnn
 
+from . import random
+from .curves import BSplineCurve, discretize_equidistant, draw_curves
+
+
+json_params = json.load(open("vesselsynth_params.json"))
 
 def setup_sampler(value):
     if isinstance(value, random.Sampler):  # Check if value is an instance of the random.Sampler class
@@ -174,11 +178,7 @@ class SynthSplineBlock(tnn.Module):
             volume *= s
         volume *= (self.vx ** dim)
         density = self.tree_density()
-<<<<<<< HEAD
         nb_trees = 1 #max(int(volume * density // 1), 1)
-=======
-        nb_trees = max(int(volume * density // 1), 1)       #from 4 to this function
->>>>>>> 6b072da203bc0034f6391d5c7f529e7d72b218c9
         print(f"number of trees: {nb_trees}")
 
         start = time.time()
@@ -316,15 +316,15 @@ class SynthVesselOCT(SynthSplineBlock):
 
     def __init__(
             self,
-            shape=(128, 128, 128),                      # ~0.2 mm3
-            voxel_size=0.01,                            # 10 um
-            tree_density=random.LogNormal(0.0025, 0.01),# trees/mm3, from 0.01 to 0.0025
-            tortuosity=random.LogNormal(1.5, 5),        # expected jitter in mm
-            radius=random.LogNormal(0.1, 0.02),         # mean radius
-            radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
-            nb_levels= random.LogNormal(3, 2), #4,      # number of hierarchical level in the tree
-            nb_children= 2, #random.LogNormal(5, 5),    # mean number of children
-            radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
+            shape=(128, 128, 128),                                                      # ~0.2 mm3
+            voxel_size=json_params["voxel_size"],                          # 10 um
+            tree_density=random.LogNormal(*json_params["tree_density"]),   # trees/mm3, from 0.01 to 0.0025
+            tortuosity=random.LogNormal(*json_params["tortuosity"]),       # expected jitter in mm
+            radius=random.LogNormal(*json_params["radius"]),               # mean radius
+            radius_change=random.LogNormal(*json_params["radius_change"]), # radius variation along the vessel
+            nb_levels=random.LogNormal(*json_params["nb_levels"]),         # number of hierarchical level in the tree
+            nb_children= random.LogNormal(*json_params["nb_children"]),    # mean number of children
+            radius_ratio=random.LogNormal(*json_params["radius_ratio"]),   # Radius ratio child/parent
             device=None): 
 
         """
