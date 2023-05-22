@@ -4,11 +4,12 @@ import json
 import os
 
 class VesselsynthGUI:
+    
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Vesselsynth")
         self.root.geometry("400x300")
-        self.root.configure(bg="black")
+        self.root.configure(bg="white")
         self.button_homescreen_text_size = 30
         self.json_window_font = ("Arial", 30, "bold")
         self.json_entry_font = ("Arial", 20)
