@@ -617,6 +617,7 @@ def draw_curves_binary(shape, curves, fast=0, **kwargs):
         return draw_curves_binary_fast(shape, curves, fast, **kwargs)
 
     curves = list(curves)
+    ncurves = len(curves)
     locations = identity_grid(shape, **backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
 
@@ -624,6 +625,7 @@ def draw_curves_binary(shape, curves, fast=0, **kwargs):
     while curves:
         curve = curves.pop(0)
         count += 1
+        print(f"{count:03d}/{ncurves:03d}", end='\r')
         time, dist = min_dist(locations, curve, **kwargs)
         radius = curve.eval_radius(time)
         is_vessel = dist <= radius
@@ -634,6 +636,7 @@ def draw_curves_binary(shape, curves, fast=0, **kwargs):
 
 def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
     curves = list(curves)
+    ncurves = len(curves)
     locations = identity_grid(shape, **backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
 
@@ -641,7 +644,7 @@ def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
     while curves:
         curve = curves.pop(0)
         count += 1
-
+        print(f"{count:03d}/{ncurves:03d}", end='\r')
         if threshold is True:
             threshold1 = 10 * max(curve.radius)
         else:

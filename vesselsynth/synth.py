@@ -7,7 +7,7 @@ from . import random
 from .curves import BSplineCurve, discretize_equidistant, draw_curves
 
 
-json_params = json.load(open("vesselsynth_params.json"))
+json_params = json.load(open("scripts/vesselsynth/vesselsynth_params.json"))
 
 def setup_sampler(value):
     if isinstance(value, random.Sampler):  # Check if value is an instance of the random.Sampler class
@@ -73,21 +73,16 @@ class SynthSplineBlock(tnn.Module):
         self.nb_levels = setup_sampler(nb_levels)
 
     def sample_curve(self, first=None, last=None, radius=None):
-
         dim = len(self.shape)
-
         def length(a, b):
             return (a-b).square().sum().sqrt()
-
         def linspace(a, b, n):
             '''Makes vectors on range [a, b] with n steps'''
             vector = (b-a) / (n-1)
             return a + vector * torch.arange(n).unsqueeze(-1)
-
         # sample initial point and length
         n = 0
         while n < 3:
-
             # sample initial point
             if first is None: # Sanity check: generates point if not given
                 side1 = torch.randint(2 * dim, [])
@@ -102,7 +97,6 @@ class SynthSplineBlock(tnn.Module):
             else:
                 a = first
                 side2 = torch.randint(2 * dim, [])
-
             # sample final point
             if last is None:
                 b = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape])
@@ -112,11 +106,9 @@ class SynthSplineBlock(tnn.Module):
                     b[side2 % dim] = self.shape[side2 % dim] - 1
             else:
                 b = last
-
             # initial straight line
             l = length(a, b)  # true length
             n = torch.randint(3, (l / 5).ceil().int().clamp_min_(4), []) # number of points in spline, min number of points is 3. Not sure we div by 5 (5 px / point)
-
         # deform curve + sample radius
         waypoints = linspace(a, b, n)   # make vectors on range [a, b] with n steps
         sigma = (self.tortuosity() - 1) * l / (2 * dim * (n - 1)) # distort vectors according to sampled tortuosity
@@ -129,22 +121,18 @@ class SynthSplineBlock(tnn.Module):
         radii.clamp_min_(0.5)
         curve = BSplineCurve(waypoints, radius=radii)
         return curve
+    
 
     def sample_tree(self, first=None, n_level=0, max_level=0, radius=None):
         radius = radius or self.radius
         root = self.sample_curve(first, radius=radius)
         curves = [root]
         levels = [n_level+1]
-
         if n_level >= max_level - 1:
             return curves, levels, []
-
-        nb_children = self.nb_children().floor().int()
+        nb_children = random.Uniform(*json_params["nb_children"])(1).floor().int()
         branchings = []
         for c in range(nb_children):
-            #MAX = torch.randint(1, 6, [])
-            #print(MAX)
-
             t = torch.rand([])
             first = root.eval_position(t)
             root_radius = root.eval_radius(t)
@@ -157,8 +145,8 @@ class SynthSplineBlock(tnn.Module):
             curves += cuves1
             levels += levels1
             branchings += branchings1
-
         return curves, levels, branchings
+
 
     def forward(self, batch=1):
         if batch > 1:
@@ -168,40 +156,39 @@ class SynthSplineBlock(tnn.Module):
                 prob += [prob1]
                 lab += [lab1]
             return torch.cat(prob), torch.cat(lab)
-
         import time
         dim = len(self.shape) # [128, 128, 128]
-
         # sample vessels
         volume = 1
         for s in self.shape:
             volume *= s
         volume *= (self.vx ** dim)
-        density = self.tree_density()
-        nb_trees = 1 #max(int(volume * density // 1), 1)
-        print(f"number of trees: {nb_trees}")
-
-        start = time.time()
+        density = random.Uniform(*json_params["tree_density"])(1)
+        nb_trees = max(int(volume * density // 1), 1) #1
+        print(f"nb_trees: {nb_trees}")
         curves = []
         levels = []
         branchings = []
         nb_levels = []
-        print(nb_trees)
+        t0 = time.time()
         for n in range(nb_trees):
-            nb_levels1 = 4 #torch.randint(1, 5, []) #self.nb_levels() #torch.randint(2, 6, [])
-            print("nb_levels1: ", nb_levels1)
+            # Can't have the random sampler be instantiated with the class. Needs to be instantiated here.
+            nb_levels1 = random.Uniform(*json_params["nb_levels"])(1)
+            print(f"nb_levels (tree {n + 1}): ", round(nb_levels1.item() // 1))
             curves1, levels1, branchings1 = self.sample_tree(max_level=nb_levels1)
             nb_levels += [max(levels1)] * len(curves1)
             curves += curves1
             levels += levels1
             branchings += branchings1
-        print('sample curves: ', time.time() - start)
+        
 
         # draw vessels
-        start = time.time()
+        t1 = time.time()
         curves = [c.to(self.device) for c in curves]
         vessels, labels = draw_curves(
-            self.shape, curves, fast=True, mode='cosine') # sum prob, label
+            self.shape, curves, fast=True, mode='cosine') # sum prob, label # mode='cosine
+        print(f"Sample Curves: {round(t1 - t0, 2)} [s]")
+        print(f"Draw Vessels: {round(time.time() - t1, 2)} [s]")
 
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):
@@ -211,6 +198,7 @@ class SynthSplineBlock(tnn.Module):
         for i, l in enumerate(nb_levels):
             nblevelmap.masked_fill_(labels == i+1, l)
 
+        t1 = time.time()
         skeleton = torch.zeros_like(labels)
         for i, curve in enumerate(curves):
             ind = discretize_equidistant(curve, 0.1)
@@ -222,7 +210,9 @@ class SynthSplineBlock(tnn.Module):
                 + ind[:, 1] * skeleton.shape[2] \
                 + ind[:, 0] * skeleton.shape[2] * skeleton.shape[1]
             skeleton.view([-1])[ind] = i+1
+        print(f"Skeleton: {round(time.time() - t1, 2)} [s]")
 
+        t1 = time.time()
         branchmap = torch.zeros_like(vessels)
         id = identity_grid(branchmap.shape, device=branchmap.device)
         for branch in branchings:
@@ -235,8 +225,9 @@ class SynthSplineBlock(tnn.Module):
                 loc = loc.round().long().tolist()
                 if all(0 <= l < s for l, s in zip(loc, branchmap.shape)):
                     branchmap[tuple(loc)] = True
-
-        print('draw curves: ', time.time() - start)
+        print(f"Branchmap: {round(time.time() - t1, 2)} [s]")
+        print("#" * 50)
+        print("\n")
 
         vessels = vessels[None, None]
         labels = labels[None, None]
@@ -316,16 +307,16 @@ class SynthVesselOCT(SynthSplineBlock):
 
     def __init__(
             self,
-            shape=(128, 128, 128),                                                      # ~0.2 mm3
+            shape=(256, 256, 256),                                         # ~0.2 mm3
             voxel_size=json_params["voxel_size"],                          # 10 um
-            tree_density=random.LogNormal(*json_params["tree_density"]),   # trees/mm3, from 0.01 to 0.0025
-            tortuosity=random.LogNormal(*json_params["tortuosity"]),       # expected jitter in mm
+            tree_density=random.Uniform(*json_params["tree_density"])(1),   # trees/mm3, from 0.01 to 0.0025
+            tortuosity=random.Uniform(*json_params["tortuosity"])(1),           #random.LogNormal(*json_params["tortuosity"]),       # expected jitter in mm
             radius=random.LogNormal(*json_params["radius"]),               # mean radius
             radius_change=random.LogNormal(*json_params["radius_change"]), # radius variation along the vessel
-            nb_levels=random.LogNormal(*json_params["nb_levels"]),         # number of hierarchical level in the tree
-            nb_children= random.LogNormal(*json_params["nb_children"]),    # mean number of children
+            nb_levels=random.Uniform(*json_params["nb_levels"])(1),         # number of hierarchical level in the tree
+            nb_children= random.Uniform(*json_params["nb_children"])(1),    # mean number of children
             radius_ratio=random.LogNormal(*json_params["radius_ratio"]),   # Radius ratio child/parent
-            device=None): 
+            device=None):
 
         """
 
