@@ -501,7 +501,7 @@ def draw_curve(shape, s, mode='cosine', tiny=0, **kwargs):
     ----------
     shape : list[int]
     s : BSplineCurve
-    mode : {'binary', 'gaussian'}
+    mode : {'binary', 'gaussian', 'cosine'}
 
     Returns
     -------
@@ -525,7 +525,7 @@ def draw_curves(shape, curves, mode='cosine', fast=0, **kwargs):
     ----------
     shape : list[int]
     s : list[BSplineCurve]
-    mode : {'binary', 'gaussian'}
+    mode : {'binary', 'gaussian', 'cosine'}
     fast : float, default=0
 
     Returns
@@ -534,6 +534,8 @@ def draw_curves(shape, curves, mode='cosine', fast=0, **kwargs):
         Drawn curve
     lab : (*shape) tensor[int]
         Label of closest curve
+    dist : (*shape) tensor
+        Distance map to centerlines
 
     """
     mode = mode[0].lower()
@@ -552,20 +554,22 @@ def draw_curves_prob(shape, curves, fast=0, mode='cosine', **kwargs):
     label = locations.new_zeros(shape, dtype=torch.long)
     sum_prob = locations.new_ones(shape)
     max_prob = locations.new_zeros(shape)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
     while curves:
         curve = curves.pop(0)
         count += 1
-        time, dist = min_dist(locations, curve, **kwargs)
+        time, dist1 = min_dist(locations, curve, **kwargs)
+        dist = torch.minimum(dist, dist1)
         radius = curve.eval_radius(time)
-        prob = dist_to_prob(dist, radius, mode)
+        prob = dist_to_prob(dist1, radius, mode)
         label.masked_fill_(prob > max_prob, count)
         max_prob = torch.maximum(max_prob, prob)
         sum_prob *= prob.neg_().add_(1)  # probability of no vessel
     sum_prob = sum_prob.neg_().add_(1)   # probability of at least one vessel
 
-    return sum_prob, label
+    return sum_prob, label, dist
 
 
 def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
@@ -575,6 +579,7 @@ def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
     sum_prob = locations.new_ones(shape)
     max_prob = locations.new_zeros(shape)
     prob = locations.new_zeros(shape)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
     ncurves = len(curves)
@@ -590,18 +595,19 @@ def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
 
         # initialize distance from table and only process
         # points that are close enough from the curve
-        time, dist = min_dist_table(locations, curve)
-        mask = dist < threshold1
+        time, dist1 = min_dist_table(locations, curve)
+        mask = dist1 < threshold1
         if mask.any():
             sublocations = locations[mask, :]
 
             kwargs.setdefault('init_kwargs', {})
             kwargs['init_kwargs']['init'] = time[mask]
-            time, dist = min_dist(sublocations, curve, **kwargs)
+            time, dist1 = min_dist(sublocations, curve, **kwargs)
             radius = curve.eval_radius(time)
-            subprob = dist_to_prob(dist, radius, mode)
+            subprob = dist_to_prob(dist1, radius, mode)
             prob.zero_()
             prob[mask] = subprob
+            dist[mask] = torch.minimum(dist[mask], dist1[mask]) 
 
             label.masked_fill_(prob > max_prob, count)
             max_prob = torch.maximum(max_prob, prob)
@@ -609,7 +615,7 @@ def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
     sum_prob = sum_prob.neg_().add_(1)   # probability of at least one curve
 
     print('')
-    return sum_prob, label
+    return sum_prob, label, dist
 
 
 def draw_curves_binary(shape, curves, fast=0, **kwargs):
@@ -619,23 +625,26 @@ def draw_curves_binary(shape, curves, fast=0, **kwargs):
     curves = list(curves)
     locations = identity_grid(shape, **backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
     while curves:
         curve = curves.pop(0)
         count += 1
-        time, dist = min_dist(locations, curve, **kwargs)
+        time, dist1 = min_dist(locations, curve, **kwargs)
+        dist = torch.minimum(dist, dist1)
         radius = curve.eval_radius(time)
-        is_vessel = dist <= radius
+        is_vessel = dist1 <= radius
         label.masked_fill_(is_vessel, count)
 
-    return label > 0, label
+    return label > 0, label, dist
 
 
 def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
     curves = list(curves)
     locations = identity_grid(shape, **backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
+    dist = locations.new_full(shape, float('inf'))
 
     count = label.new_zeros([])
     while curves:
@@ -649,19 +658,20 @@ def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
 
         # initialize distance from table and only process
         # points that are close enough from the curve
-        time, dist = min_dist_table(locations, curve)
-        mask = dist < threshold1
+        time, dist1 = min_dist_table(locations, curve)
+        mask = dist1 < threshold1
         if mask.any():
             sublocations = locations[mask, :]
 
             kwargs.setdefault('init_kwargs', {})
             kwargs['init_kwargs']['init'] = time[mask]
-            time, dist = min_dist(sublocations, curve, **kwargs)
+            time, dist1 = min_dist(sublocations, curve, **kwargs)
             radius = curve.eval_radius(time)
-            is_vessel = dist <= radius
+            is_vessel = dist1 <= radius
             label[mask] = torch.where(is_vessel, count, label[mask])
+            dist[mask] = torch.minimum(dist[mask], dist1[mask]) 
 
-    return label > 0, label
+    return label > 0, label, dist
 
 
 def _draw_curves_inv(shape, s, mode='cosine', tiny=0):

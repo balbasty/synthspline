@@ -17,10 +17,8 @@ def make_tuple(x):
     return x
 
 
-def to_tensor(x):
-    x = torch.as_tensor(x)
-    if not x.dtype.is_floating_point:
-        x = x.float()
+def to_tensor(x, dtype=torch.get_default_dtype()):
+    x = torch.as_tensor(x, dtype=dtype)
     return x
 
 
@@ -195,8 +193,32 @@ class Uniform(Sampler):
             self.scale = self.fwhm / pymath.sqrt(12)
             self.mean = (self.min + self.max) / 2
 
-        if self.scale:
+        if self.scale.any():
             self.sampler = distributions.Uniform(self.min, self.max).sample
+        else:
+            self.sampler = Dirac(self.mean)
+
+    def __call__(self, n):
+        return self.sampler(make_tuple(n or []))
+
+
+class RandInt(Sampler):
+    def __init__(self, *args, **kwargs):
+        if len(args) == 1:
+            self.max = to_tensor(args[0], dtype=torch.long)
+            self.min = torch.zeros([]).to(self.max)
+        elif len(args) == 2:
+            self.min = to_tensor(args[0], dtype=torch.long)
+            self.max = to_tensor(args[1], dtype=torch.long)
+        else:
+            self.max = to_tensor(kwargs['max'], dtype=torch.long)
+            self.min = to_tensor(kwargs.get('min', to_tensor(0).to(self.max)), dtype=torch.long)
+        self.fwhm = self.max - self.min + 1
+        self.scale = (self.fwhm * self.fwhm - 1) ** 0.5 / pymath.sqrt(12)
+        self.mean = (self.min + self.max) / 2
+
+        if self.scale:
+            self.sampler = lambda x: distributions.Uniform(self.min-0.5, self.max+0.5).sample(x).round().to(torch.long)
         else:
             self.sampler = Dirac(self.mean)
 

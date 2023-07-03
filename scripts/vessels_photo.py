@@ -1,6 +1,6 @@
 import sys
 import interpol
-from vesselsynth.synth import SynthVesselOCT
+from vesselsynth.synth import SynthVesselPhoto
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 import nibabel as nib
@@ -80,7 +80,7 @@ if device.type == 'cuda' and not torch.cuda.is_available():
     device = 'cpu'
 
 # setup synthesizer
-synth = SynthVesselOCT(shape, device=device)
+synth = SynthVesselPhoto(shape, device=device)
 
 # synth
 root = SaveExp(root).main()
