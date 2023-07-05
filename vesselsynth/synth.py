@@ -189,7 +189,7 @@ class SynthSplineBlock(tnn.Module):
         start = time.time()
         curves = [c.to(self.device) for c in curves]
         vessels, labels, dist = draw_curves(
-            self.shape, curves, fast=True, mode='cosine')
+            self.shape, curves, fast=False, mode='cosine')
 
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):

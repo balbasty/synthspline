@@ -198,7 +198,7 @@ class Uniform(Sampler):
         else:
             self.sampler = Dirac(self.mean)
 
-    def __call__(self, n):
+    def __call__(self, n=tuple()):
         return self.sampler(make_tuple(n or []))
 
 
@@ -222,7 +222,7 @@ class RandInt(Sampler):
         else:
             self.sampler = Dirac(self.mean)
 
-    def __call__(self, n):
+    def __call__(self, n=tuple()):
         return self.sampler(make_tuple(n or []))
 
 
@@ -236,7 +236,7 @@ class Normal(Sampler):
         else:
             self.sampler = Dirac(mean)
 
-    def __call__(self, n):
+    def __call__(self, n=tuple()):
         return self.sampler(make_tuple(n or []))
 
 
