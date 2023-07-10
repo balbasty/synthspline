@@ -1,10 +1,11 @@
 import torch
 from interpol import grid_pull, grid_push, grid_grad, spline_coeff, identity_grid
 import math as pymath
-from .brent import Brent
+from vesselsynth.brent import Brent
+from vesselsynth import backend
 
 
-def backend(x):
+def tensor_backend(x):
     return dict(dtype=x.dtype, device=x.device)
 
 
@@ -37,7 +38,7 @@ class BSplineCurve:
         self.coeff = spline_coeff(waypoints, interpolation=self.order,
                                   bound=self.bound, dim=0)
         if not isinstance(radius, (int, float)):
-            radius = torch.as_tensor(radius, **backend(waypoints))
+            radius = torch.as_tensor(radius, **tensor_backend(waypoints))
         self.radius = radius
         if torch.is_tensor(radius):
             self.coeff_radius = spline_coeff(radius, interpolation=self.order,
@@ -58,7 +59,7 @@ class BSplineCurve:
 
     def update_waypoints(self):
         """Convert coefficients into waypoints"""
-        t = torch.linspace(0, 1, len(self.coeff), **backend(self.coeff))
+        t = torch.linspace(0, 1, len(self.coeff), **tensor_backend(self.coeff))
         p = self.eval_position(t)
         if p.shape == self.waypoints.shape:
             self.waypoints.copy_(p)
@@ -70,7 +71,7 @@ class BSplineCurve:
         if not hasattr(self, 'coeff_radius'):
             return
         t = torch.linspace(0, 1, len(self.coeff_radius),
-                           **backend(self.coeff_radius))
+                           **tensor_backend(self.coeff_radius))
         r = self.eval_radius(t)
         if torch.is_tensor(self.radius) and r.shape == self.radius.shape:
             self.radius.copy_(r)
@@ -83,8 +84,8 @@ class BSplineCurve:
         shifts = [0.5 * (frm / to - 1)
                   for frm, to in zip(from_shape, to_shape)]
         scales = [frm / to for frm, to in zip(from_shape, to_shape)]
-        shifts = torch.as_tensor(shifts, **backend(self.waypoints))
-        scales = torch.as_tensor(scales, **backend(self.waypoints))
+        shifts = torch.as_tensor(shifts, **tensor_backend(self.waypoints))
+        scales = torch.as_tensor(scales, **tensor_backend(self.waypoints))
         self.waypoints.sub_(shifts).div_(scales)
         self.coeff.sub_(shifts).div_(scales)
         self.radius.div_(scales.prod().pow_(1/len(scales)))
@@ -97,8 +98,8 @@ class BSplineCurve:
         shifts = [0.5 * (frm / to - 1)
                   for frm, to in zip(from_shape, to_shape)]
         scales = [frm / to for frm, to in zip(from_shape, to_shape)]
-        shifts = torch.as_tensor(shifts, **backend(self.waypoints))
-        scales = torch.as_tensor(scales, **backend(self.waypoints))
+        shifts = torch.as_tensor(shifts, **tensor_backend(self.waypoints))
+        scales = torch.as_tensor(scales, **tensor_backend(self.waypoints))
         self.waypoints.mul_(scales).add_(shifts)
         self.coeff.mul_(scales).add_(shifts)
         self.radius.mul_(scales.prod().pow_(1/len(scales)))
@@ -227,13 +228,33 @@ def min_dist(x, s, method='gn', **kwargs):
             Hongling Wang, Joseph Kearney, Kendall Atkinson
             Proc. 5th International Conference on Curves and Surfaces (2002)
     """
+
     method = method[0].lower()
-    if method == 'g':
-        return min_dist_gn(x, s, **kwargs)
-    elif method == 'q':
-        return min_dist_quad(x, s, **kwargs)
+
+    if backend.jitfields:
+        from jitfields.distance import (
+            spline_distance_gaussnewton,
+            spline_distance_brent,
+            spline_distance_table,
+        )
+        if method == 'g':
+            fn = spline_distance_gaussnewton
+        elif method == 'q':
+            fn = spline_distance_brent
+        else:
+            fn = spline_distance_table
+        d, t = fn(x, s.coeff, bound=s.bound)
+        t /= (s.coeff.shape[-2] - 1)
+        return t, d
     else:
-        return min_dist_table(x, s, **kwargs)
+        if method == 'g':
+            fn = min_dist_gn
+        elif method == 'q':
+            fn = min_dist_quad
+        else:
+            fn = min_dist_table
+
+        return fn(x, s, **kwargs)
 
 
 def min_dist_table(x, s, steps=None):
@@ -291,9 +312,9 @@ def min_dist_table(x, s, steps=None):
         length = dot(length, length).sqrt_().sum()
         steps = max(3, (length / 2).ceil().int().item())
     if isinstance(steps, int):
-        all_t = torch.linspace(0, 1, steps, **backend(x))
+        all_t = torch.linspace(0, 1, steps, **tensor_backend(x))
     else:
-        all_t = torch.as_tensor(steps, **backend(x)).flatten()
+        all_t = torch.as_tensor(steps, **tensor_backend(x)).flatten()
     all_x = torch.stack([s.eval_position(t1) for t1 in all_t])
     t, d = mind(x, all_x, all_t)
 
@@ -501,7 +522,7 @@ def draw_curve(shape, s, mode='cosine', tiny=0, **kwargs):
     ----------
     shape : list[int]
     s : BSplineCurve
-    mode : {'binary', 'gaussian'}
+    mode : {'binary', 'gaussian', 'cosine'}
 
     Returns
     -------
@@ -509,7 +530,7 @@ def draw_curve(shape, s, mode='cosine', tiny=0, **kwargs):
         Drawn curve
 
     """
-    x = identity_grid(shape, **backend(s.waypoints))
+    x = identity_grid(shape, **tensor_backend(s.waypoints))
     t, d = min_dist(x, s, **kwargs)
     r = s.eval_radius(t)
     if mode[0].lower() == 'b':
@@ -525,7 +546,7 @@ def draw_curves(shape, curves, mode='cosine', fast=0, **kwargs):
     ----------
     shape : list[int]
     s : list[BSplineCurve]
-    mode : {'binary', 'gaussian'}
+    mode : {'binary', 'gaussian', 'cosine'}
     fast : float, default=0
 
     Returns
@@ -534,6 +555,8 @@ def draw_curves(shape, curves, mode='cosine', fast=0, **kwargs):
         Drawn curve
     lab : (*shape) tensor[int]
         Label of closest curve
+    dist : (*shape) tensor
+        Distance map to centerlines
 
     """
     mode = mode[0].lower()
@@ -548,33 +571,38 @@ def draw_curves_prob(shape, curves, fast=0, mode='cosine', **kwargs):
         return draw_curves_prob_fast(shape, curves, fast, mode, **kwargs)
 
     curves = list(curves)
-    locations = identity_grid(shape, **backend(curves[0].waypoints))
+    locations = identity_grid(shape, **tensor_backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
     sum_prob = locations.new_ones(shape)
     max_prob = locations.new_zeros(shape)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
+    ncurves = len(curves)
     while curves:
         curve = curves.pop(0)
         count += 1
-        time, dist = min_dist(locations, curve, **kwargs)
+        print(f"{count:03d}/{ncurves:03d}", end='\r')
+        time, dist1 = min_dist(locations, curve, **kwargs)
+        dist = torch.minimum(dist, dist1)
         radius = curve.eval_radius(time)
-        prob = dist_to_prob(dist, radius, mode)
+        prob = dist_to_prob(dist1, radius, mode)
         label.masked_fill_(prob > max_prob, count)
         max_prob = torch.maximum(max_prob, prob)
         sum_prob *= prob.neg_().add_(1)  # probability of no vessel
     sum_prob = sum_prob.neg_().add_(1)   # probability of at least one vessel
 
-    return sum_prob, label
+    return sum_prob, label, dist
 
 
 def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
     curves = list(curves)
-    locations = identity_grid(shape, **backend(curves[0].waypoints))
+    locations = identity_grid(shape, **tensor_backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
     sum_prob = locations.new_ones(shape)
     max_prob = locations.new_zeros(shape)
     prob = locations.new_zeros(shape)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
     ncurves = len(curves)
@@ -590,18 +618,19 @@ def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
 
         # initialize distance from table and only process
         # points that are close enough from the curve
-        time, dist = min_dist_table(locations, curve)
-        mask = dist < threshold1
+        time, dist1 = min_dist_table(locations, curve)
+        mask = dist1 < threshold1
         if mask.any():
             sublocations = locations[mask, :]
 
             kwargs.setdefault('init_kwargs', {})
             kwargs['init_kwargs']['init'] = time[mask]
-            time, dist = min_dist(sublocations, curve, **kwargs)
+            time, dist1 = min_dist(sublocations, curve, **kwargs)
             radius = curve.eval_radius(time)
-            subprob = dist_to_prob(dist, radius, mode)
+            subprob = dist_to_prob(dist1, radius, mode)
             prob.zero_()
             prob[mask] = subprob
+            dist[mask] = torch.minimum(dist[mask], dist1) 
 
             label.masked_fill_(prob > max_prob, count)
             max_prob = torch.maximum(max_prob, prob)
@@ -609,7 +638,7 @@ def draw_curves_prob_fast(shape, curves, threshold, mode='cosine', **kwargs):
     sum_prob = sum_prob.neg_().add_(1)   # probability of at least one curve
 
     print('')
-    return sum_prob, label
+    return sum_prob, label, dist
 
 
 def draw_curves_binary(shape, curves, fast=0, **kwargs):
@@ -617,28 +646,28 @@ def draw_curves_binary(shape, curves, fast=0, **kwargs):
         return draw_curves_binary_fast(shape, curves, fast, **kwargs)
 
     curves = list(curves)
-    ncurves = len(curves)
-    locations = identity_grid(shape, **backend(curves[0].waypoints))
+    locations = identity_grid(shape, **tensor_backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
+    dist = locations.new_full(shape, float('inf'))
 
     count = 0
     while curves:
         curve = curves.pop(0)
         count += 1
-        print(f"{count:03d}/{ncurves:03d}", end='\r')
-        time, dist = min_dist(locations, curve, **kwargs)
+        time, dist1 = min_dist(locations, curve, **kwargs)
+        dist = torch.minimum(dist, dist1)
         radius = curve.eval_radius(time)
-        is_vessel = dist <= radius
+        is_vessel = dist1 <= radius
         label.masked_fill_(is_vessel, count)
 
-    return label > 0, label
+    return label > 0, label, dist
 
 
 def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
     curves = list(curves)
-    ncurves = len(curves)
-    locations = identity_grid(shape, **backend(curves[0].waypoints))
+    locations = identity_grid(shape, **tensor_backend(curves[0].waypoints))
     label = locations.new_zeros(shape, dtype=torch.long)
+    dist = locations.new_full(shape, float('inf'))
 
     count = label.new_zeros([])
     while curves:
@@ -652,25 +681,26 @@ def draw_curves_binary_fast(shape, curves, threshold, **kwargs):
 
         # initialize distance from table and only process
         # points that are close enough from the curve
-        time, dist = min_dist_table(locations, curve)
-        mask = dist < threshold1
+        time, dist1 = min_dist_table(locations, curve)
+        mask = dist1 < threshold1
         if mask.any():
             sublocations = locations[mask, :]
 
             kwargs.setdefault('init_kwargs', {})
             kwargs['init_kwargs']['init'] = time[mask]
-            time, dist = min_dist(sublocations, curve, **kwargs)
+            time, dist1 = min_dist(sublocations, curve, **kwargs)
             radius = curve.eval_radius(time)
-            is_vessel = dist <= radius
+            is_vessel = dist1 <= radius
             label[mask] = torch.where(is_vessel, count, label[mask])
+            dist[mask] = torch.minimum(dist[mask], dist1) 
 
-    return label > 0, label
+    return label > 0, label, dist
 
 
 def _draw_curves_inv(shape, s, mode='cosine', tiny=0):
     """prod_k (1 - p_k)"""
     s = list(s)
-    x = identity_grid(shape, **backend(s[0].waypoints))
+    x = identity_grid(shape, **tensor_backend(s[0].waypoints))
     s1 = s.pop(0)
     t, d = min_dist(x, s1)
     r = s1.eval_radius(t)

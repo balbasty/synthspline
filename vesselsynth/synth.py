@@ -234,7 +234,7 @@ class SynthSplineBlock(tnn.Module):
         levelmap = levelmap[None, None]                                                 # I want this to be a binary mask. Binary masks are needed for the training of the unet
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
-        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton
+        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton, dist
 
 
 class SynthVesselMicro(SynthSplineBlock):
@@ -350,6 +350,46 @@ class SynthVesselOCT(SynthSplineBlock):
                          radius, radius_change, nb_levels, nb_children,
                          radius_ratio, device)
 
+
+class SynthVesselPhoto(SynthSplineBlock):
+
+    def __init__(
+            self,
+            shape=(256, 256, 256),                      # ~450 mm3
+            voxel_size=0.03,                            # 30 um
+            tree_density=random.LogNormal(0.1, 0.2),    # trees/mm3
+            tortuosity=random.LogNormal(1, 5),          # expected jitter in mm
+            radius=random.LogNormal(0.1, 0.02),         # mean radius
+            radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
+            nb_levels=random.RandInt(1, 5),             # number of hierarchical level in the tree
+            nb_children=random.LogNormal(2, 3),         # mean number of children
+            radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
+            device=None):
+        """
+
+        Parameters
+        ----------
+        shape : list[int]
+        voxel_size : float
+        tree_density : Sampler
+            Number of trees per mm3
+            For vessels, should be 8 (in the cortex) according to known_stats
+        tortuosity : Sampler
+            Expected jitter, in mm
+        radius : Sampler
+            Mean radius at the first (coarsest) level
+        radius_change : Sampler
+            Radius variation along the length of the spline
+        nb_levels : Sampler
+            Number of hierarchical levels
+        nb_children :
+            Number of children per spline
+        radius_ratio : Sampler
+            Ratio between the mean radius at child and parent levels
+        """
+        super().__init__(shape, voxel_size, tree_density, tortuosity,
+                         radius, radius_change, nb_levels, nb_children,
+                         radius_ratio, device)
 
 class SynthAxon(SynthSplineBlock):
 
