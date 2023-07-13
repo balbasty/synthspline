@@ -76,10 +76,12 @@ class SynthSplineBlock(tnn.Module):
         dim = len(self.shape)
         def length(a, b):
             return (a-b).square().sum().sqrt()
+        
         def linspace(a, b, n):
             '''Makes vectors on range [a, b] with n steps'''
             vector = (b-a) / (n-1)
             return a + vector * torch.arange(n).unsqueeze(-1)
+        
         # sample initial point and length
         n = 0
         while n < 3:
@@ -97,6 +99,7 @@ class SynthSplineBlock(tnn.Module):
             else:
                 a = first
                 side2 = torch.randint(2 * dim, [])
+
             # sample final point
             if last is None:
                 b = torch.cat([torch.rand([1]) * (s - 1) for s in self.shape])
@@ -185,8 +188,8 @@ class SynthSplineBlock(tnn.Module):
         # draw vessels
         t1 = time.time()
         curves = [c.to(self.device) for c in curves]
-        vessels, labels = draw_curves(
-            self.shape, curves, fast=True, mode='cosine') # sum prob, label # mode='cosine
+        vessels, labels, dist = draw_curves(
+            self.shape, curves, fast=False, mode='cosine') # sum prob, label # mode='cosine
         print(f"Sample Curves: {round(t1 - t0, 2)} [s]")
         print(f"Draw Vessels: {round(time.time() - t1, 2)} [s]")
 

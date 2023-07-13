@@ -26,16 +26,13 @@ class VesselsOCT(object):
         self.header = nib.Nifti1Header()
 
     def main(self):
-
         os.makedirs(self.root, exist_ok=True)
         self.logParams()
         self.backend(self.device)
         self.outputShape()
-
         for n in range(self.n_volumes):
             synth_key = ['prob', 'label', "level", "nb_levels", "branch", "skeleton"]
             synth_vols = SynthVesselOCT(shape=self.shape, device=self.device)()
-
             for i in range(len(synth_key)):
                 self.saveVolume(n, synth_key[i], synth_vols[i])            
 
