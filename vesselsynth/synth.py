@@ -312,9 +312,9 @@ class SynthVesselOCT(SynthSplineBlock):
             self,
             shape=(256, 256, 256),                                         # ~0.2 mm3
             voxel_size=json_params["voxel_size"],                          # 10 um
-            tree_density=random.Uniform(*json_params["tree_density"])(1),   # trees/mm3, from 0.01 to 0.0025
-            tortuosity=random.Uniform(*json_params["tortuosity"])(1),           #random.LogNormal(*json_params["tortuosity"]),       # expected jitter in mm
-            radius=random.LogNormal(*json_params["radius"]),               # mean radius
+            tree_density=random.Uniform(*json_params["tree_density"])(1),  # trees/mm3, from 0.01 to 0.0025
+            tortuosity=random.Uniform(*json_params["tortuosity"])(1),      #random.LogNormal(*json_params["tortuosity"]),       # expected jitter in mm
+            radius=random.Uniform(*json_params["radius"]),               # mean radius LogNormal([0.05, 0.04])
             radius_change=random.LogNormal(*json_params["radius_change"]), # radius variation along the vessel
             nb_levels=random.Uniform(*json_params["nb_levels"])(1),         # number of hierarchical level in the tree
             nb_children= random.Uniform(*json_params["nb_children"])(1),    # mean number of children
