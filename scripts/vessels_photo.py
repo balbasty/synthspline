@@ -1,5 +1,5 @@
 import sys
-from vesselsynth import backend
+from init import backend
 from vesselsynth.synth import SynthVesselPhoto
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp

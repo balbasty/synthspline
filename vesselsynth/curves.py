@@ -1,9 +1,9 @@
 import torch
 from interpol import grid_pull, grid_push, grid_grad, spline_coeff, identity_grid
 import math as pymath
-from vesselsynth.vesselsynth.brent import Brent
-from vesselsynth.vesselsynth import backend
-
+from vesselsynth.vesselsynth import Brent
+from vesselsynth.vesselsynth.utils import _Backend
+backend = _Backend()
 
 def tensor_backend(x):
     return dict(dtype=x.dtype, device=x.device)

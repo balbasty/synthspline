@@ -1,5 +1,9 @@
 import interpol
 
+from .brent import *
+from .save_exp import *
+from .io import *
+from .synth import *
 
 class _Backend:
 
