@@ -1,8 +1,8 @@
 import torch
 from interpol import grid_pull, grid_push, grid_grad, spline_coeff, identity_grid
 import math as pymath
-from vesselsynth.brent import Brent
-from vesselsynth import backend
+from vesselsynth.vesselsynth.brent import Brent
+from vesselsynth.vesselsynth import backend
 
 
 def tensor_backend(x):

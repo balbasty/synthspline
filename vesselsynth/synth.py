@@ -7,7 +7,7 @@ from . import random
 from .curves import BSplineCurve, discretize_equidistant, draw_curves
 
 
-json_params = json.load(open("scripts/vesselsynth/vesselsynth_params.json"))
+json_params = json.load(open("/autofs/cluster/octdata2/users/epc28/veritas/scripts/vesselsynth/vesselsynth_params.json"))
 
 def setup_sampler(value):
     if isinstance(value, random.Sampler):  # Check if value is an instance of the random.Sampler class
