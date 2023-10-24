@@ -4,6 +4,7 @@ from .brent import *
 from .save_exp import *
 from .io import *
 from .synth import *
+from .utils import *
 
 class _Backend:
 
@@ -18,6 +19,5 @@ class _Backend:
     def jitfields(self, value):
         self._jitfields = value
         interpol.backend.jitfields = value
-
 
 backend = _Backend()
