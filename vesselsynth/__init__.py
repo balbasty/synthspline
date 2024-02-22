@@ -4,7 +4,7 @@ import interpol
 class _Backend:
 
     def __init__(self) -> None:
-        _jitfields = interpol.backend.jitfields
+        self._jitfields = interpol.backend.jitfields
 
     @property
     def jitfields(self):
