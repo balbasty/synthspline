@@ -1,7 +1,8 @@
 import sys
 import interpol
 from vesselsynth.synth import SynthVesselHiResMRI
-from nitorch import io, spatial
+from vesselsynth.utils import default_affine
+import nibabel as nib
 import os
 from sys import argv
 import torch
@@ -84,12 +85,26 @@ synth = SynthVesselHiResMRI(shape, device=device)
 os.makedirs(root, exist_ok=True)
 for n in range(start+1, stop+1):
 
-    im, lab, lvl, nlvl, brch, skl = synth()
-    affine = spatial.affine_default(im.shape[-3:])
+    im, lab, lvl, nlvl, brch, skl, dist = synth()
 
-    io.savef(im.squeeze(), f'{root}/{n:04d}_vessels_prob.nii.gz', affine=affine)
-    io.save(lab.squeeze(), f'{root}/{n:04d}_vessels_label.nii.gz', affine=affine, dtype='int32')
-    io.save(lvl.squeeze(), f'{root}/{n:04d}_vessels_level.nii.gz', affine=affine, dtype='uint8')
-    io.save(nlvl.squeeze(), f'{root}/{n:04d}_vessels_nblevels.nii.gz', affine=affine, dtype='uint8')
-    io.save(brch.squeeze(), f'{root}/{n:04d}_vessels_branch.nii.gz', affine=affine, dtype='uint8')
-    io.save(skl.squeeze(), f'{root}/{n:04d}_vessels_skeleton.nii.gz', affine=affine, dtype='uint8')
+    affine = default_affine(im.shape[-3:])
+    h = nib.Nifti1Header()
+
+    nib.save(nib.Nifti1Image(im.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_prob.nii.gz')
+    nib.save(nib.Nifti1Image(dist.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_dist.nii.gz')
+
+    h.set_data_dtype('int32')
+    nib.save(nib.Nifti1Image(lab.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_label.nii.gz')
+
+    h.set_data_dtype('uint8')
+    nib.save(nib.Nifti1Image(lvl.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_level.nii.gz')
+    nib.save(nib.Nifti1Image(nlvl.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_nblevels.nii.gz')
+    nib.save(nib.Nifti1Image(brch.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_branch.nii.gz')
+    nib.save(nib.Nifti1Image(skl.squeeze().cpu().numpy(), affine, h),
+             f'{root}/{n:04d}_vessels_skeleton.nii.gz')

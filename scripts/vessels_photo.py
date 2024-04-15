@@ -1,6 +1,6 @@
 import sys
-import interpol
-from vesselsynth.synth import SynthVesselOCT
+from vesselsynth import backend
+from vesselsynth.synth import SynthVesselPhoto
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 import nibabel as nib
@@ -9,13 +9,13 @@ from sys import argv
 import torch
 
 # Use faster jitfield backend to compute splines
-interpol.backend.jitfields = True
+backend.jitfields = True
 
 # defaults
 home = os.environ.get('HOME')
 root = '/tmp'
 device = 'cuda'
-shape = 128
+shape = 256
 start = 0
 stop = 1000
 
@@ -29,7 +29,7 @@ python <path_to_script.py> [[<first>] <last>] [-o <output>] [-d <device>] [-s <s
 >> Defaults:
 >> - first  = 0
 >> - last   = 1000
->> - shape  = 128
+>> - shape  = 256
 >> - device = 'cuda' if available else 'cpu'
 >> - output = {root}
 """
@@ -80,7 +80,7 @@ if device.type == 'cuda' and not torch.cuda.is_available():
     device = 'cpu'
 
 # setup synthesizer
-synth = SynthVesselOCT(shape, device=device)
+synth = SynthVesselPhoto(shape, device=device)
 
 # synth
 root = SaveExp(root).main()

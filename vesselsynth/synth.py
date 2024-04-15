@@ -188,8 +188,8 @@ class SynthSplineBlock(tnn.Module):
         # draw vessels
         start = time.time()
         curves = [c.to(self.device) for c in curves]
-        vessels, labels = draw_curves(
-            self.shape, curves, fast=True, mode='cosine')
+        vessels, labels, dist = draw_curves(
+            self.shape, curves, fast=False, mode='cosine')
 
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):
@@ -231,7 +231,7 @@ class SynthSplineBlock(tnn.Module):
         levelmap = levelmap[None, None]
         branchmap = branchmap[None, None]
         skeleton = skeleton[None, None]
-        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton
+        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton, dist
 
 
 class SynthVesselMicro(SynthSplineBlock):
@@ -305,13 +305,13 @@ class SynthVesselOCT(SynthSplineBlock):
     def __init__(
             self,
             shape=(128, 128, 128),                      # ~0.2 mm3
-            voxel_size=0.05,                            # 50 mu
+            voxel_size=0.01,                            # 10 mu
             tree_density=random.LogNormal(0.01, 0.01),  # trees/mm3
-            tortuosity=random.LogNormal(5, 3),          # expected jitter in mm
+            tortuosity=random.LogNormal(1.5, 5),        # expected jitter in mm
             radius=random.LogNormal(0.1, 0.02),         # mean radius
             radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
             nb_levels=4,                                # number of hierarchical level in the tree
-            nb_children=random.LogNormal(5, 5),         # mean number of children
+            nb_children=random.LogNormal(2, 3),         # mean number of children
             radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
             device=None):
         """
@@ -346,6 +346,46 @@ class SynthVesselOCT(SynthSplineBlock):
                          radius, radius_change, nb_levels, nb_children,
                          radius_ratio, device)
 
+
+class SynthVesselPhoto(SynthSplineBlock):
+
+    def __init__(
+            self,
+            shape=(256, 256, 256),                      # ~450 mm3
+            voxel_size=0.03,                            # 30 um
+            tree_density=random.LogNormal(0.1, 0.2),    # trees/mm3
+            tortuosity=random.LogNormal(1, 5),          # expected jitter in mm
+            radius=random.LogNormal(0.1, 0.02),         # mean radius
+            radius_change=random.LogNormal(1., 0.2),    # radius variation along the vessel
+            nb_levels=random.RandInt(1, 5),             # number of hierarchical level in the tree
+            nb_children=random.LogNormal(2, 3),         # mean number of children
+            radius_ratio=random.LogNormal(0.5, 0.1),    # Radius ratio child/parent
+            device=None):
+        """
+
+        Parameters
+        ----------
+        shape : list[int]
+        voxel_size : float
+        tree_density : Sampler
+            Number of trees per mm3
+            For vessels, should be 8 (in the cortex) according to known_stats
+        tortuosity : Sampler
+            Expected jitter, in mm
+        radius : Sampler
+            Mean radius at the first (coarsest) level
+        radius_change : Sampler
+            Radius variation along the length of the spline
+        nb_levels : Sampler
+            Number of hierarchical levels
+        nb_children :
+            Number of children per spline
+        radius_ratio : Sampler
+            Ratio between the mean radius at child and parent levels
+        """
+        super().__init__(shape, voxel_size, tree_density, tortuosity,
+                         radius, radius_change, nb_levels, nb_children,
+                         radius_ratio, device)
 
 class SynthAxon(SynthSplineBlock):
 
