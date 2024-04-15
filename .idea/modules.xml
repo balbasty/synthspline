@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/../cornucopia/.idea/cornucopia.iml" filepath="$PROJECT_DIR$/../cornucopia/.idea/cornucopia.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../nitorch/.idea/nitorch.iml" filepath="$PROJECT_DIR$/../nitorch/.idea/nitorch.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../torch-interpol/.idea/torch-interpol.iml" filepath="$PROJECT_DIR$/../torch-interpol/.idea/torch-interpol.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../vesselseg/.idea/vesselseg.iml" filepath="$PROJECT_DIR$/../vesselseg/.idea/vesselseg.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/vesselsynth.iml" filepath="$PROJECT_DIR$/.idea/vesselsynth.iml" />
+    </modules>
+  </component>
+</project>
