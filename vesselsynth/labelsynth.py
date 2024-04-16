@@ -20,35 +20,75 @@ def setup_sampler(value):
 
 class SynthSplineParameters:
     """
-    A class to hold (default) parameters
-    (roughly modeled on dataclasses)
+    A class to hold parameters (roughly modeled on `@dataclass`)
+
+    In order to define savable parameters, one can inherit from
+    `SynthSplineParameters` and define typed attributes with default
+    values in the subclass. Every typed attribute can also be instantiated
+    through the constructor. Hence, the class
+    ```python
+    class MyParams(SynthSplineParameters):
+        x: int
+        y: float = 3.0
+    ```
+    has an `__init__` method defined automatically of the form
+    ```python
+    def __init__(self, x: int, y: float = 3.0):
+        self.x = x
+        self.y = y
+    ```
+
+    Note that parameters typed `AnyVar` have a special treatment as
+    they are passed through the function `setup_sampler` which ensures
+    that the value is a `Sampler` (a `Dirac` sampler as a fallback).
+
+    An object of type `SynthSplineParameters` also has a `to_dict()`
+    method that returns a dictionary whose keys are its typed parameters.
+    The values in the `to_dict()` dictionary can be of any type and are
+    not necessarily JSON-serializable.
+
+    If JSON serialization is needed, the object also implements a
+    `serialize()` method that further serializes each value in the
+    dictionary. Serializable values are recognized because they also have
+    a `serialize()` method (this is the case of all `Sampler` subclasses).
+    It is the user's responsibility that all values in a
+    `SynthSplineParameters` either have JSON-compatible types or implement
+    a `serialize()` method.
     """
 
     def __init__(self, *args, **kwargs):
         known_keys = list(self.__annotations__.keys())
         for key, arg in zip(known_keys, args):
-            if self.__annotations__.get(key, None) is AnyVar:
+            if issubclass(self.__annotations__.get(key, object), AnyVar):
                 arg = setup_sampler(arg)
             setattr(self, key, arg)
         for key, val in kwargs.items():
-            if self.__annotations__.get(key, None) is AnyVar:
+            if issubclass(self.__annotations__.get(key, object), AnyVar):
                 val = setup_sampler(val)
             setattr(self, key, val)
         for key in known_keys[len(args):]:
             if key not in kwargs:
                 val = getattr(self, key)
-                if self.__annotations__.get(key, None) is AnyVar:
+                if issubclass(self.__annotations__.get(key, object), AnyVar):
                     val = setup_sampler(val)
                 setattr(self, key, val)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
+        """
+        Returns the object in dictionary form.
+        Only typed attributes are present in the dictionary.
+        """
         return {
             key: val
             for key, val in self.__dict__.items()
             if key in self.__annotations__
         }
 
-    def serialize(self, keep_tensors=False):
+    def serialize(self, keep_tensors=False) -> dict:
+        """
+        Returns the object in JSON-compatible form.
+        Only typed attributes are present in the dictionary.
+        """
         obj = self.to_dict()
         for key, val in obj.items():
             if isinstance(val, random.Sampler):
@@ -58,7 +98,10 @@ class SynthSplineParameters:
         return obj
 
     @classmethod
-    def unserialize(cls, obj):
+    def unserialize(cls, obj: dict):
+        """
+        Builds an object from its JSON-compatible form.
+        """
         obj = dict(obj)
         for key, val in obj.items():
             if isinstance(val, str) and \
