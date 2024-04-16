@@ -10,9 +10,9 @@ __all__ = [
 import math
 import torch
 from torch import distributions, Tensor, get_default_dtype
-from typing import Union, Callable, Optional
+from typing import Union, Callable, Optional, Tuple
 from numbers import Number
-from .utils import make_tuple, to_tensor
+from .utils import make_tuple, to_tensor, import_fullname
 
 
 pymin, pymax = min, max
@@ -135,6 +135,31 @@ class Sampler(RandomVar):
         distributions from the exponential family.
     """
 
+    def serialize(self, keep_tensors=False):
+        """
+        Serialize object into a dictionary
+
+        If `keep_tensors`, the dictionary must be written to disk with
+        `torch.save`. Otherwise, it can be written to disk with `json.dump`.
+        """
+        return {type(self).__name__: self.param.serialize(keep_tensors)}
+
+    @classmethod
+    def unserialize(cls, json):
+        """
+        Unserialize a Sampler.
+
+        Assumes that `json` contains the sampler name as key and its
+        arguments as value.
+        """
+        if not isinstance(json, dict) or len(json) != 1:
+            raise ValueError('Cannot interpret this object as a Sampler')
+        (sampler, args), = json.items()
+        if '.' not in sampler:
+            sampler = 'vesselsynth.random.' + sampler
+        sampler = import_fullname(sampler)
+        return sampler.unserialize(args)
+
     class Parameters:
         """
         An object that contains the parameters of a sampler, and knows
@@ -155,11 +180,37 @@ class Sampler(RandomVar):
         shape: torch.Size = None
         loc: Tensor = None
         scale: Tensor = None
+        _keys: Tuple[str] = tuple()
 
         def __init__(self, ref, **kwargs) -> None:
             self.ref = ref
             for key, value in kwargs.items():
                 setattr(self, key, value)
+            self._keys = tuple(kwargs.keys())
+
+        def serialize(self, keep_tensors=False):
+            """
+            Serialize object into a dictionary
+
+            If `keep_tensors`, the dictionary must be written to disk
+            with `torch.save`. Otherwise, it can be written to disk
+            with `json.dump`.
+            """
+            json = {}
+            for key in self._keys:
+                val = getattr(self, key)
+                if torch.is_tensor(val):
+                    # Tensor, which we may or may not serialize as a list
+                    if not keep_tensors:
+                        val = val.tolist()
+                elif hasattr(val, 'serialize'):
+                    # Serializable object
+                    val = val.serialize(keep_tensors)
+                elif callable(val):
+                    # Let's hope it's importable
+                    val = val.__module__ + '.' + val.__name__
+                json[key] = val
+            return json
 
         def mean(self,
                  nb_samples: Optional[int] = None,
@@ -324,6 +375,18 @@ class Sampler(RandomVar):
             `shape` is the broadcasted shape of the parameter(s).
         """
         return NotImplemented
+
+    def to_str(self):
+        args = []
+        for key in self.param._keys:
+            val = getattr(self.param, key)
+            if hasattr(val, 'to_str'):
+                val = val.to_str()
+            args += [f'{key}={val}']
+        args = ', '.join(args)
+        return f'{type(self).__name__}({args})'
+
+    __repr__ = __str__ = to_str
 
     def exp(self) -> RandomVar:
         """
@@ -519,6 +582,19 @@ class Op1(Sampler):
     A sampler obtained by applying a function to another sampler.
     """
 
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            sampler = obj['sampler']
+            op = obj['op']
+        else:
+            sampler, op = obj
+        if isinstance(sampler, dict):
+            sampler = Sampler.unserialize(sampler)
+        if isinstance(op, str):
+            op = import_fullname(op)
+        return cls(sampler, op)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -567,6 +643,22 @@ class Op2(Sampler):
     A sampler obtained by applying a function to two other samplers.
     """
 
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            sampler1 = obj['sampler1']
+            sampler2 = obj['sampler2']
+            op = obj['op']
+        else:
+            sampler1, sampler2, op = obj
+        if isinstance(sampler1, dict):
+            sampler1 = Sampler.unserialize(sampler1)
+        if isinstance(sampler2, dict):
+            sampler2 = Sampler.unserialize(sampler2)
+        if isinstance(op, str):
+            op = import_fullname(op)
+        return cls(sampler1, sampler2, op)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -607,10 +699,32 @@ class Op2(Sampler):
         return self.param.op(x, y)
 
 
+class SamplerList(list):
+    """Utility class to hold a serializable list of Samplers"""
+    def serialize(self, keep_tensors=False):
+        return [x.serialize(keep_tensors) if isinstance(x, Sampler) else x
+                for x in self]
+
+
 class OpN(Sampler):
     """
     A sampler obtained by applying a function to `N` other samplers.
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            samplers = obj['samplers']
+            op = obj['op']
+        else:
+            samplers, op = obj
+        samplers = [
+            Sampler.unserialize(sampler) if isinstance(sampler, dict)
+            else sampler for sampler in samplers
+        ]
+        if isinstance(op, str):
+            op = import_fullname(op)
+        return cls(samplers, op)
 
     class Parameters(Sampler.Parameters):
 
@@ -635,8 +749,9 @@ class OpN(Sampler):
         op : callable
             A function that takes N tensors as input and returns a tensor
         """
-        samplers = [Dirac(f) if not isinstance(f, Sampler) else f
-                    for f in samplers]
+        samplers = SamplerList([
+            Dirac(f) if not isinstance(f, Sampler) else f for f in samplers
+        ])
         self.param = self.Parameters(self, samplers=samplers, op=op)
 
     def __call__(self, batch=tuple(), **backend):
@@ -658,6 +773,16 @@ class Dirac(Sampler):
         Dirac(mean=0)         # alias
         ```
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -717,6 +842,16 @@ class Uniform(Sampler):
         Uniform(*, scale=VALUE)     # Alias for std
         ```
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -823,6 +958,16 @@ class RandInt(Sampler):
         RandInt(*, scale=VALUE)     # Alias for std
         ```
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -937,6 +1082,16 @@ class Normal(Sampler):
         Normal(*, scale=VALUE)      # Alias for sigma
         ```
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
+
     class Parameters(Sampler.Parameters):
 
         @property
@@ -1021,6 +1176,16 @@ class LogNormal(Sampler):
         LogNormal(*, scale=VALUE)      # Alias for sigma
         ```
     """
+
+    @classmethod
+    def unserialize(cls, obj):
+        if isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
+
     class Parameters(Sampler.Parameters):
 
         @property

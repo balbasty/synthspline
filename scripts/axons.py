@@ -1,4 +1,4 @@
-from vesselsynth.cli import App
-from vesselsynth.synth import SynthAxon
+from vesselsynth.cli import LabelApp
+from vesselsynth.labelzoo import SynthAxon
 
-App(SynthAxon, shape=192).run()
+LabelApp(SynthAxon, shape=192).run()

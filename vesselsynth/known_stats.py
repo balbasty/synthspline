@@ -29,7 +29,7 @@ References
       Med Eng Phys (2007)
 ..[7] "Methods for Three-Dimensional Geometric Characterization
        of the Arterial Vasculature"
-      PADRAIG M. O’FLYNN, GERARD O’SULLIVAN, ABHAY S. PANDIT
+      PADRAIG M. O'FLYNN, GERARD O'SULLIVAN, ABHAY S. PANDIT
       Annals of Biomedical Engineerin (2007)
 ..[8] "A statistical model of the penetrating arterioles and venules in
        the human cerebral cortex"
@@ -453,4 +453,3 @@ class StatLauwers2008:
         normalized=dict(mean=3.54, median=3.59, sd=0.96),
         capillaries=dict(mean=52.95, median=36.07, sd=49.75),
     )
-

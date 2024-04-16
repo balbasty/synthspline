@@ -1,6 +1,6 @@
 import sys
 import interpol
-from vesselsynth.synth import SynthVesselHiResMRI
+from vesselsynth.labelsynth import SynthVesselHiResMRI
 from vesselsynth.utils import default_affine
 import nibabel as nib
 import os
@@ -21,8 +21,8 @@ stop = 1000
 help = f"""
 python <path_to_script.py> [[<first>] <last>] [-o <output>] [-d <device>] [-s <shape]
 
->> Generate synthetic vessel volumes indexed from <first> to <last>, 
->> with shape <shape>, using device <device> and and write them 
+>> Generate synthetic vessel volumes indexed from <first> to <last>,
+>> with shape <shape>, using device <device> and and write them
 >> in directory <output>.
 
 >> Defaults:

@@ -1,6 +1,6 @@
 import sys
 import interpol
-from vesselsynth.synth import SynthVesselOCT
+from vesselsynth.labelsynth import SynthVesselOCT
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 import nibabel as nib
@@ -22,8 +22,8 @@ stop = 1000
 help = f"""
 python <path_to_script.py> [[<first>] <last>] [-o <output>] [-d <device>] [-s <shape]
 
->> Generate synthetic vessel volumes indexed from <first> to <last>, 
->> with shape <shape>, using device <device> and and write them 
+>> Generate synthetic vessel volumes indexed from <first> to <last>,
+>> with shape <shape>, using device <device> and and write them
 >> in directory <output>.
 
 >> Defaults:

@@ -1,8 +1,12 @@
+__all__ = ['SynthSplineBlock', 'SynthSplineParameters']
 import torch
-from torch import nn as tnn
-from .curves import BSplineCurve, BSplineCurves
-from . import random
+from torch import nn
+from typing import Union, List
+from collections import namedtuple
 from interpol import identity_grid
+from vesselsynth.curves import BSplineCurve, BSplineCurves
+from vesselsynth.random import AnyVar, Sampler
+from vesselsynth import random
 
 
 def setup_sampler(value):
@@ -14,59 +18,114 @@ def setup_sampler(value):
         return random.Uniform(*value)
 
 
-class SynthSplineBlock(tnn.Module):
-
-    class defaults:
-        shape: int = (64, 64, 64)
-        voxel_size: float = 0.1
-        nb_levels: int = 1
-        tree_density = random.LogNormal(mean=0.5, std=0.5)
-        tortuosity = random.LogNormal(mean=0.7, std=0.2)
-        radius = random.LogNormal(mean=0.07, std=0.01)
-        radius_change = random.LogNormal(mean=1., std=0.1)
-        nb_children = random.LogNormal(mean=5, std=5)
-        radius_ratio = random.LogNormal(mean=0.7, std=0.1)
-        device = None
+class SynthSplineParameters:
+    """
+    A class to hold (default) parameters
+    (roughly modeled on dataclasses)
+    """
 
     def __init__(self, *args, **kwargs):
-        """
-
-        Parameters
-        ----------
-        shape : list[int]
-            Number of voxels in the synthesized patch
-        voxel_size : float
-            Voxel size of the patch
-        tree_density : Sampler
-            Number of trees per mm^3
-            For vessels, should be 8 (in the cortex) according to known_stats
-            Default: LogNormal(0.5, 0.5), 95% of samples in [0.6, 4.5]
-        tortuosity : Sampler
-            Tortuosity ~= cord / length
-            Default: LogNormal(0.7, 0.2), 95% of samples in [1.3, 3.0]
-        radius : Sampler
-            Mean radius at the first (coarsest) level
-            Default: LogNormal(0.07, 0.01), 95% of samples in [1.05, 1.09]
-        radius_change : Sampler
-            Radius variation along the length of the spline
-            Default : LogNormal(1., 0.1), 95% of samples in [2.2, 3.3]
-        nb_levels : Sampler
-            Number of hierarchical levels
-        nb_children :
-            Number of children per spline
-            Default: LogNormal(5, 5)
-        radius_ratio : Sampler
-            Ratio between the mean radius at child and parent levels
-            Default : LogNormal(0.7, 0.1), 95% of samples in [1.6, 2.5]
-        """
-        super().__init__()
-        params = {key: val for key, val in self.defaults.__dict__.items()
-                  if key[0] != '_'}
-        params.update({key: val for key, val in zip(params.keys(), args)})
-        params.update(kwargs)
-        for key, val in params.items():
-            if key not in ('shape', 'voxel_size', 'device'):
+        known_keys = list(self.__annotations__.keys())
+        for key, arg in zip(known_keys, args):
+            if self.__annotations__.get(key, None) is AnyVar:
+                arg = setup_sampler(arg)
+            setattr(self, key, arg)
+        for key, val in kwargs.items():
+            if self.__annotations__.get(key, None) is AnyVar:
                 val = setup_sampler(val)
+            setattr(self, key, val)
+        for key in known_keys[len(args):]:
+            if key not in kwargs:
+                val = getattr(self, key)
+                if self.__annotations__.get(key, None) is AnyVar:
+                    val = setup_sampler(val)
+                setattr(self, key, val)
+
+    def to_dict(self):
+        return {
+            key: val
+            for key, val in self.__dict__.items()
+            if key in self.__annotations__
+        }
+
+    def serialize(self, keep_tensors=False):
+        obj = self.to_dict()
+        for key, val in obj.items():
+            if isinstance(val, random.Sampler):
+                obj[key] = val.serialize(keep_tensors)
+            if isinstance(val, torch.device):
+                obj[key] = val.type
+        return obj
+
+    @classmethod
+    def unserialize(cls, obj):
+        obj = dict(obj)
+        for key, val in obj.items():
+            if isinstance(val, str) and \
+                    issubclass(cls.__annotations__[key], AnyVar):
+                obj[key] = Sampler.unserialize(val)
+        return cls(**obj)
+
+
+class SynthSplineBlock(nn.Module):
+    """
+    A generic synthesis machine for spline-based trees.
+    """
+
+    ReturnedType = namedtuple('ReturnedType', [
+        'vessels',
+        'labels',
+        'levelmap',
+        'nblevelmap',
+        'branchmap',
+        'skeleton',
+        'dist',
+    ])
+
+    class defaults(SynthSplineParameters):
+        shape: List[int] = (64, 64, 64)
+        """Number of voxels in the synthesized patch"""
+        voxel_size: float = 0.1
+        """Voxel size of the patch"""
+        nb_levels: AnyVar = 1
+        """Number of hierarchical levels"""
+        tree_density: AnyVar = random.LogNormal(mean=0.5, std=0.5)
+        """
+        Number of trees per mm^3
+        For vessels, should be 8 (in the cortex) according to known_stats
+        Default: 95% of samples in [0.6, 4.5]
+        """
+        tortuosity: AnyVar = random.LogNormal(mean=0.7, std=0.2)
+        """
+        Tortuosity ~= cord / length
+        Default: 95% of samples in [1.3, 3.0]
+        """
+        radius: AnyVar = random.LogNormal(mean=0.07, std=0.01)
+        """
+        Mean radius at the first (coarsest) level
+        Default: 95% of samples in [1.05, 1.09]
+        """
+        radius_change: AnyVar = random.LogNormal(mean=1., std=0.1)
+        """
+        Radius variation along the length of the spline
+        Default : 95% of samples in [2.2, 3.3]
+        """
+        nb_children: AnyVar = random.LogNormal(mean=5, std=5)
+        """
+        Number of children per spline
+        """
+        radius_ratio: AnyVar = random.LogNormal(mean=0.7, std=0.1)
+        """
+        Ratio between the mean radius at child and parent levels
+        Default : 95% of samples in [1.6, 2.5]
+        """
+        device: Union[torch.device, str] = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.params = self.defaults(*args, **kwargs)
+        print(self.params.to_dict())
+        for key, val in self.params.to_dict().items():
             setattr(self, key, val)
 
     def sample_curve(self, first=None, last=None, radius=None):
@@ -242,15 +301,14 @@ class SynthSplineBlock(tnn.Module):
         skeleton : (batch, 1, *shape) tensor[bool]
             Mask of all voxels that are traversed by a centerline.
         dist : (batch, 1, *shape) tensor[float]
-            Distance from eahc voxel to its nearest centerline.
+            Distance from each voxel to its nearest centerline.
         """
         if batch > 1:
-            prob, lab = [], []
-            for _ in range(batch):
-                prob1, lab1 = self()
-                prob += [prob1]
-                lab += [lab1]
-            return torch.cat(prob), torch.cat(lab)
+            out = list(map(lambda x: [x], self()))
+            for _ in range(batch-1):
+                for i, x in enumerate(self()):
+                    out[i].append(x)
+            return self.ReturnedType(*map(torch.cat, out))
 
         import time
         dim = len(self.shape)
@@ -320,129 +378,12 @@ class SynthSplineBlock(tnn.Module):
 
         print(f'Curves rasterized in {time.time() - start:.3f} sec')
 
-        vessels = vessels[None, None]
-        labels = labels[None, None]
-        levelmap = levelmap[None, None]
-        branchmap = branchmap[None, None]
-        skeleton = skeleton[None, None]
-        return vessels, labels, levelmap, nblevelmap, branchmap, skeleton, dist
-
-
-class SynthVesselMicro(SynthSplineBlock):
-
-    class defaults:
-        shape = (256, 256, 256)
-        """Number of voxels in the patch (256 -> ~16 mm3 @ 10 micron)"""
-        voxel_size = 0.01
-        """10 micron"""
-        nb_levels = 5
-        """Number of hierarchical level in the tree. Could be random."""
-        tree_density = random.LogNormal(mean=8, std=1)
-        """Trees/mm3"""
-        tortuosity = random.LogNormal(mean=2, std=1)
-        """Tortuosity ~= cord / length"""
-        radius = random.LogNormal(mean=0.07, std=0.01)
-        """Mean radius, in mm, at coarsest level"""
-        radius_change = random.LogNormal(mean=1., std=0.1)
-        """Radius variation along the spline"""
-        nb_children = random.LogNormal(mean=5, std=5)
-        """Number of branches per spline"""
-        radius_ratio = random.LogNormal(mean=0.7, std=0.1)
-        """Radius ratio branch/parent"""
-        device = None
-
-
-class SynthVesselHiResMRI(SynthSplineBlock):
-
-    class defaults:
-        shape = (256, 256, 256)
-        """Number of voxels in the patch (256 -> ~16 cm3 @ 100 micron)"""
-        voxel_size = 0.1
-        """100 micron"""
-        nb_levels = 2
-        """Number of hierarchical level in the tree. Could be random."""
-        tree_density = random.LogNormal(mean=0.01, std=0.01)
-        """Trees/mm3"""
-        tortuosity = random.LogNormal(mean=5, std=3)
-        """Tortuosity ~= cord / length"""
-        radius = random.LogNormal(mean=0.1, std=0.02)
-        """Mean radius, in mm, at coarsest level"""
-        radius_change = random.LogNormal(mean=1., std=0.1)
-        """Radius variation along the spline"""
-        nb_children = random.LogNormal(mean=5, std=5)
-        """Number of branches per spline"""
-        radius_ratio = random.LogNormal(mean=0.7, std=0.1)
-        """Radius ratio branch/parent"""
-        device = None
-
-
-class SynthVesselOCT(SynthSplineBlock):
-
-    class defaults:
-        shape = (128, 128, 128)
-        """Number of voxels in the patch (256 -> ~2 mm3 @ 10 micron)"""
-        voxel_size = 0.01
-        """10 micron"""
-        nb_levels = 4
-        """Number of hierarchical level in the tree. Could be random."""
-        tree_density = random.LogNormal(mean=0.01, std=0.01)
-        """Trees/mm3"""
-        tortuosity = random.LogNormal(mean=1.5, std=5)
-        """Tortuosity ~= cord / length"""
-        radius = random.LogNormal(mean=0.1, std=0.02)
-        """Mean radius, in mm, at coarsest level"""
-        radius_change = random.LogNormal(mean=1., std=0.2)
-        """Radius variation along the spline"""
-        nb_children = random.LogNormal(mean=2, std=3)
-        """Number of branches per spline"""
-        radius_ratio = random.LogNormal(mean=0.5, std=0.1)
-        """Radius ratio branch/parent"""
-        device = None
-
-
-class SynthVesselPhoto(SynthSplineBlock):
-
-    class defaults:
-        shape = (256, 256, 256)
-        """Number of voxels in the patch (256 -> ~450 mm3 @ 30 micron)"""
-        voxel_size = 0.03
-        """30 micron"""
-        nb_levels = random.RandInt(min=1, max=5)
-        """Number of hierarchical level in the tree. Could be random."""
-        tree_density = random.LogNormal(mean=0.1, std=0.2)
-        """Trees/mm3"""
-        tortuosity = random.LogNormal(mean=1, std=5)
-        """Tortuosity ~= cord / length"""
-        radius = random.LogNormal(mean=0.1, std=0.02)
-        """Mean radius, in mm, at coarsest level"""
-        radius_change = random.LogNormal(mean=1., std=0.2)
-        """Radius variation along the spline"""
-        nb_children = random.LogNormal(mean=2, std=3)
-        """Number of branches per spline"""
-        radius_ratio = random.LogNormal(mean=0.5, std=0.1)
-        """Radius ratio branch/parent"""
-        device = None
-
-
-class SynthAxon(SynthSplineBlock):
-
-    class defaults:
-        shape = (256, 256, 256)
-        """Number of voxels in the patch (256 -> 16E-3 mm3 @ 1 micron)"""
-        voxel_size = 1e-3
-        """1 micron"""
-        nb_levels = 2
-        """Number of hierarchical level in the tree. Could be random."""
-        tree_density = 10 ** random.Uniform(min=4, max=6)
-        """Trees/mm3"""
-        tortuosity = random.LogNormal(mean=1.1, std=2)
-        """Tortuosity ~= cord / length"""
-        radius = random.LogNormal(mean=1e-3, std=5e-4).clamp_max(2e-3)
-        """Mean radius, in mm, at coarsest level"""
-        radius_change = random.LogNormal(mean=1., std=0.1)
-        """Radius variation along the spline"""
-        nb_children = random.LogNormal(mean=0.5, std=1)
-        """Number of branches per spline"""
-        radius_ratio = random.LogNormal(mean=1, std=0.1)
-        """Radius ratio branch/parent"""
-        device = None
+        return self.ReturnedType(
+            vessels[None, None],
+            labels[None, None],
+            levelmap[None, None],
+            nblevelmap[None, None],
+            branchmap[None, None],
+            skeleton[None, None],
+            dist[None, None],
+        )

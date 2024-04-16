@@ -1,4 +1,14 @@
+__all__ = [
+    'default_affine',
+    'make_list',
+    'make_tuple',
+    'pyflatten',
+    'to_tensor',
+    'import_qualname',
+    'import_fullname',
+]
 import torch
+from importlib import import_module
 
 
 def default_affine(shape, voxel_size=1, **backend):
@@ -231,3 +241,71 @@ def to_tensor(*x, dtype=None, device=None):
     out = tuple(torch.as_tensor(elem, dtype=dtype, device=device)
                 for elem in x)
     return out[0] if len(out) == 1 else out
+
+
+def import_qualname(module, qualname):
+    """
+    Import or get object from its qualified name
+
+    Parameters
+    ----------
+    module : module or str or dict
+        Instantiated module, or module path such as `"package.module"`,
+        or a dictionary of objects such as `locals()`.
+    qualname : str
+        Qualified name, such as `"MyClass.SubClass.attribute"`.
+
+    Returns
+    -------
+    object
+    """
+    qualname = list(qualname.split('.'))
+
+    obj = module
+    if isinstance(obj, str):
+        obj = import_module(obj)
+
+    while qualname:
+        if isinstance(obj, dict):
+            obj = obj[qualname.pop(0)]
+        else:
+            obj = getattr(obj, qualname.pop(0))
+
+    return obj
+
+
+def import_fullname(fullname, locals={}):
+    """
+    Import object from its fully qualified name, where we don't know
+    which part is the module path, and which part if the qualified path.
+
+    Parameters
+    ----------
+    fullname : str
+        Fully qualified name, such as `"package.module.MyClass.attribute"`.
+
+    Returns
+    -------
+    object
+    """
+    fullname = list(fullname.split('.'))
+
+    # import module and submodules
+    modulename = fullname.pop(0)
+    try:
+        module = import_module(modulename)
+    except (ImportError, ModuleNotFoundError) as e:
+        # It might be a local variable
+        if not fullname and modulename in locals:
+            return locals[modulename]
+        raise e
+
+    while fullname:
+        if hasattr(module, fullname[0]):
+            break
+        try:
+            module = import_module(modulename + '.' + fullname[0])
+            modulename += '.' + fullname.pop(0)
+        except (ImportError, ModuleNotFoundError):
+            break
+    return import_qualname(module, '.'.join(fullname))

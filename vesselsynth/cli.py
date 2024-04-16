@@ -1,16 +1,18 @@
+__all__ = ['LabelApp']
 import os
 import sys
 import torch
+import yaml
 import nibabel as nib
 from textwrap import dedent
 from tempfile import gettempdir
 from vesselsynth import backend
-from vesselsynth.synth import SynthSplineBlock
+from vesselsynth.labelsynth import SynthSplineBlock
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 
 
-class App:
+class LabelApp:
     """
     Utility class to create a command-line app that synthesizes splines.
     """
@@ -125,6 +127,8 @@ class App:
         #       We should make something a bit more programmable
         root = SaveExp(self.root).main()
         os.makedirs(root, exist_ok=True)
+        with open(f'{root}/params.yaml', 'w') as f:
+            yaml.safe_dump(synth.params.serialize(), f, sort_keys=False)
 
         for n in range(self.start+1, self.stop+1):
             self.synth_one(synth, n, root)
