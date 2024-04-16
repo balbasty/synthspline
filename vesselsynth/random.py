@@ -1,263 +1,1101 @@
+__all__ = [
+    'Sampler',
+    'Op1', 'Op2', 'OpN',
+    'Dirac',
+    'Uniform',
+    'RandInt',
+    'Normal',
+    'LogNormal',
+]
+import math
 import torch
-from torch import distributions
-import math as pymath
+from torch import distributions, Tensor, get_default_dtype
+from typing import Union, Callable, Optional
+from numbers import Number
+from .utils import make_tuple, to_tensor
 
 
-def make_list(x):
-    if not isinstance(x, (list, tuple)):
-        x = [x]
-    x = list(x)
+pymin, pymax = min, max
+
+
+def _get_aliases(kwargs, keys, default=None):
+    for key in keys:
+        if key in kwargs:
+            return kwargs[key]
+    return default
+
+
+def min(*args):
+    """
+    Return a random variable that is the minimum of multiple variables.
+    """
+    if len(args) == 0:
+        return None
+    if len(args) == 1:
+        return args[0]
+    x, *args = args
+    while args:
+        y, *args = args
+        if isinstance(x, Sampler):
+            x = x.minimum(y)
+        elif isinstance(y, Sampler):
+            x = y.minimum(x)
+        else:
+            x = pymin(x, y)
     return x
 
 
-def make_tuple(x):
-    if not isinstance(x, (list, tuple)):
-        x = (x,)
-    x = tuple(x)
+def max(*args):
+    """
+    Return a random variable that is the maximum of multiple variables.
+    """
+    if len(args) == 0:
+        return None
+    if len(args) == 1:
+        return args[0]
+    x, *args = args
+    while args:
+        y, *args = args
+        if isinstance(x, Sampler):
+            x = x.maximum(y)
+        elif isinstance(y, Sampler):
+            x = y.maximum(x)
+        else:
+            x = pymax(x, y)
     return x
 
 
-def to_tensor(x, dtype=torch.get_default_dtype()):
-    x = torch.as_tensor(x, dtype=dtype)
-    return x
+class RandomVar:
+    """
+    Base class for random variables.
+
+    Nothing is defined here, mostly used for type hints.
+    """
+    pass
 
 
-class Sampler:
+AnyVar = Union[Number, Tensor, RandomVar]
+"""
+Either a deterministic variable (a number) or a random variable (a sampler).
+"""
 
-    mean = None
-    scale = None
 
-    def exp(self):
+class Sampler(RandomVar):
+    """
+    Base class for all random samplers.
+
+    !!! note
+        - Most samplers have a set of fixed hyper-parameters, for example,
+          the mean and standard deviation of the Normal distribution.
+
+        - All hyper-parameters should be tensors, or will be converted to
+          tensors. All samplers return a tensor, even when the
+          hyper-parameters passed by the user are not. The type and device
+          of the samples are generally the same as those of the
+          hyper-parameters, but can be overrided at call-time.
+
+        - All samplers should be thought of as random variables, and new
+          random variables can be derived by applying determinstic or random
+          functions to other random variables. All supported functions are
+          defined in this class.
+
+    !!! tip "Sampling"
+        All samplers generate values by calling them.
+
+        - If they are called without arguments, they return a scalar tensor.
+        - If they are called with an integer, they return a vector tensor
+          with this length.
+        - If they are called with a list of integers, they return a tensor
+          of values with this shape.
+
+        ```python
+        sampler = Normal()
+        sampler()           # ~ tensor(0.3)
+        sampler(3)          # ~ tensor([0.3, -0.2, 1.5])
+        sampler([1, 3])     # ~ tensor([[0.3, -0.2, 1.5]])
+        ```
+
+    !!! warning "Equality"
+        The `==` and `!=` operations are functions that transform the
+        random variable, like any others. They do not test if the
+        _distributions are identical_ but generate a random variable
+        that returns `True` if _the realizations from its parents are
+        identical_.
+
+    Attributes
+    ----------
+    param : Parameters
+        The sampler parameters and derived metrics.
+
+        It has methods `mean()`, `var()`, `std()`, `min()` and `max()`
+        and attribute `shape`. Each specialized sampler also adds attributes
+        specific to its parameters (for example, the `Normal` sampler
+        adds `mu` and `sigma` attributes). Many samplers also implement
+        the attributes `loc` and `scale`, whose use is standard in
+        distributions from the exponential family.
+    """
+
+    class Parameters:
+        """
+        An object that contains the parameters of a sampler, and knows
+        how to compute derived metrics such as the mean or variance.
+
+        Attributes
+        ----------
+        ref
+            Reference to the Sampler object.
+        shape
+            Shape of the parameter tensor (broadcasted if multiple parameters).
+        loc
+            Location parameter.
+        scale
+            Scale parameter.
+        """
+        ref: "Sampler" = None
+        shape: torch.Size = None
+        loc: Tensor = None
+        scale: Tensor = None
+
+        def __init__(self, ref, **kwargs) -> None:
+            self.ref = ref
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        def mean(self,
+                 nb_samples: Optional[int] = None,
+                 max_samples: Optional[int] = None) -> Tensor:
+            """
+            Compute the expected value of the distribution.
+
+            Parameters
+            ----------
+            nb_samples : int
+                Number of samples used for monte-carlo estimation.
+                If `None` (default), use either the exact value if it exists,
+                or assume a peaked distribution.
+            max_samples : int
+                Maximum number of samples to hold in memory.
+                If `None` (default), generate all samples at once, which
+                may use up a lot of memory.
+            """
+            if nb_samples:
+                if max_samples and max_samples < nb_samples:
+                    x, n = 0, 0
+                    while n < nb_samples:
+                        n1 = min(max_samples, nb_samples - n)
+                        x += self.ref(n1).sum(0)
+                        n += n1
+                    x /= n
+                else:
+                    x = self.ref(nb_samples).mean(0)
+                return x
+            return NotImplemented
+
+        def var(self,
+                nb_samples: Optional[int] = None,
+                max_samples: Optional[int] = None) -> Tensor:
+            """
+            Compute the variance of the distribution.
+
+            Parameters
+            ----------
+            nb_samples : int
+                Number of samples used for monte-carlo estimation.
+                If `None` (default), use either the exact value if it exists,
+                or assume a peaked distribution.
+            max_samples : int
+                Maximum number of samples to hold in memory.
+                If `None` (default), generate all samples at once, which
+                may use up a lot of memory.
+            """
+            if nb_samples:
+                if max_samples and max_samples < nb_samples:
+                    x, n = 0, 0
+                    while n < nb_samples:
+                        n1 = min(max_samples, nb_samples - n)
+                        x += self.ref(n1).square_().sum(0)
+                        n += n1
+                    x /= n
+                else:
+                    x = self.ref(nb_samples).var(0)
+                return x
+            return NotImplemented
+
+        def std(self,
+                nb_samples: Optional[int] = None,
+                max_samples: Optional[int] = None) -> Tensor:
+            """
+            Compute the standard deviation of the distribution.
+
+            Parameters
+            ----------
+            nb_samples : int
+                Number of samples used for monte-carlo estimation.
+                If `None` (default), use either the exact value if it exists,
+                or assume a peaked distribution.
+            max_samples : int
+                Maximum number of samples to hold in memory.
+                If `None` (default), generate all samples at once, which
+                may use up a lot of memory.
+            """
+            return self.var(nb_samples, max_samples).sqrt_()
+
+        def min(self,
+                nb_samples: Optional[int] = None,
+                max_samples: Optional[int] = None) -> Tensor:
+            """
+            Compute the minimum of the distribution's support.
+
+            Parameters
+            ----------
+            nb_samples : int
+                Number of samples used for monte-carlo estimation.
+                If `None` (default), use either the exact value if it exists,
+                or assume a peaked distribution.
+            max_samples : int
+                Maximum number of samples to hold in memory.
+                If `None` (default), generate all samples at once, which
+                may use up a lot of memory.
+            """
+            if nb_samples:
+                if max_samples and max_samples < nb_samples:
+                    x = self.ref(max_samples).min(0).values
+                    n = max_samples
+                    while n < nb_samples:
+                        n1 = min(max_samples, nb_samples - n)
+                        x = x.minimum(self.ref(n1).min(0).values)
+                        n += n1
+                    x /= n
+                else:
+                    x = self.ref(nb_samples).min(0).values
+                return x
+            return NotImplemented
+
+        def max(self,
+                nb_samples: Optional[int] = None,
+                max_samples: Optional[int] = None) -> Tensor:
+            """
+            Compute the maximum of the distribution's support.
+
+            Parameters
+            ----------
+            nb_samples : int
+                Number of samples used for monte-carlo estimation.
+                If `None` (default), use either the exact value if it exists,
+                or assume a peaked distribution.
+            max_samples : int
+                Maximum number of samples to hold in memory.
+                If `None` (default), generate all samples at once, which
+                may use up a lot of memory.
+            """
+            if nb_samples:
+                if max_samples and max_samples < nb_samples:
+                    x = self.ref(max_samples).max(0).values
+                    n = max_samples
+                    while n < nb_samples:
+                        n1 = min(max_samples, nb_samples - n)
+                        x = x.maximum(self.ref(n1).max(0).values)
+                        n += n1
+                    x /= n
+                else:
+                    x = self.ref(nb_samples).max(0).values
+                return x
+            return NotImplemented
+
+    param: Parameters
+
+    def __call__(self, batch=tuple(), **backend) -> Tensor:
+        """
+        Sample from the distribution
+
+        Parameters
+        ----------
+        batch : tuple[int], optional
+            Batch size
+        dtype : torch.dtype, optional
+            Data type
+        device : torch.dtype, optional
+            Device
+
+        Returns
+        -------
+        sample : tensor
+            Tensor of values, with shape `(*batch, *shape)`, where
+            `shape` is the broadcasted shape of the parameter(s).
+        """
+        return NotImplemented
+
+    def exp(self) -> RandomVar:
+        """
+        Exponential
+        """
         return Op1(self, torch.exp)
 
-    def log(self):
+    def log(self) -> RandomVar:
+        """
+        Natural logarithm
+        """
         return Op1(self, torch.log)
 
-    def sqrt(self):
+    def sqrt(self) -> RandomVar:
+        """
+        Square root. Can also be called via `x ** 0.5`.
+        """
         return Op1(self, torch.sqrt)
 
-    def square(self):
+    def square(self) -> RandomVar:
+        """
+        Square. Can also be called via `x ** 2`.
+        """
         return Op1(self, torch.square)
 
-    def pow(self, other):
+    def pow(self, other: AnyVar) -> RandomVar:
+        """
+        Take the power of the left var. Can also be called via `x ** other`.
+        """
         return Op2(self, other, torch.pow)
 
-    def rpow(self, other):
+    def rpow(self, other: AnyVar) -> "Sampler":
+        """
+        Take the power of the right var. Can also be called via `other ** x`.
+        """
         return Op2(other, self, torch.pow)
 
-    def add(self, other):
+    def add(self, other: AnyVar) -> RandomVar:
+        """
+        Sum of two variables. Can also be called via `x + other`.
+        """
         return Op2(self, other, torch.add)
 
-    def sub(self, other):
+    def sub(self, other: AnyVar) -> RandomVar:
+        """
+        Difference of two variables. Can also be called via `x - other`.
+        """
         return Op2(self, other, torch.sub)
 
-    def mul(self, other):
+    def mul(self, other: AnyVar) -> RandomVar:
+        """
+        Product of two variables. Can also be called via `x * other`.
+        """
         return Op2(self, other, torch.mul)
 
-    def div(self, other):
+    def div(self, other: AnyVar) -> RandomVar:
+        """
+        Ratio of two variables. Can also be called via `x / other`.
+        """
         return Op2(self, other, torch.div)
 
-    def floordiv(self, other):
+    def floordiv(self, other: AnyVar) -> RandomVar:
+        """
+        Floor division. Can also be called via `x // other`.
+        """
         return Op2(self, other, torch.floor_divide)
 
-    def matmul(self, other):
+    def matmul(self, other: AnyVar) -> RandomVar:
+        """
+        Matrix product. Can also be called via `x @ other`.
+        """
         return Op2(self, other, torch.matmul)
 
-    def minimum(self, other):
+    def minimum(self, other: AnyVar) -> RandomVar:
+        """
+        Minimum of two variables.
+        """
         return Op2(self, other, torch.minimum)
 
-    def maximum(self, other):
+    def maximum(self, other: AnyVar) -> RandomVar:
+        """
+        Maximum of two variables.
+        """
         return Op2(self, other, torch.maximum)
 
-    def clamp(self, min, max):
+    def equal(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are equal to the right values.
+        Can also be called via `x == other`.
+        """
+        return Op2(self, other, torch.less)
+
+    def not_equal(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are different from the right values.
+        Can also be called via `x != other`.
+        """
+        return Op2(self, other, torch.less)
+
+    def less(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are less than right values (exclusive).
+        Can also be called via `x < other`.
+        """
+        return Op2(self, other, torch.less)
+
+    def less_equal(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are less than right values (inclusive).
+        Can also be called via `x <= other`.
+        """
+        return Op2(self, other, torch.less_equal)
+
+    def greater(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are greater than right values (exclusive).
+        Can also be called via `x > other`.
+        """
+        return Op2(self, other, torch.greater)
+
+    def greater_equal(self, other: AnyVar) -> RandomVar:
+        """
+        Whether left values are greater than right values (inclusive).
+        Can also be called via `x >= other`.
+        """
+        return Op2(self, other, torch.greater_equal)
+
+    def clamp(self, min: AnyVar, max: AnyVar) -> RandomVar:
+        """
+        Clamp values outside a range.
+        """
         return self.minimum(max).maximum(min)
 
-    def clamp_min(self, other):
+    def clamp_min(self, other: AnyVar) -> RandomVar:
+        """
+        Clamp values below a threshold.
+        """
         return self.maximum(other)
 
-    def clamp_max(self, other):
+    def clamp_max(self, other: AnyVar) -> RandomVar:
+        """
+        Clamp values above a threshold.
+        """
         return self.minimum(other)
 
-    def __pow__(self, other, modulo=None):
+    def __pow__(self, other: AnyVar, modulo=None) -> RandomVar:
         if modulo is not None:
             raise NotImplementedError('pow+modulo not implemented')
         return self.pow(other)
 
-    def __rpow__(self, other):
+    def __rpow__(self, other: AnyVar) -> RandomVar:
         return self.rpow(other)
 
-    def __add__(self, other):
+    def __add__(self, other: AnyVar) -> RandomVar:
         return self.add(other)
 
-    def __sub__(self, other):
+    def __sub__(self, other: AnyVar) -> RandomVar:
         return self.sub(other)
 
-    def __mul__(self, other):
+    def __mul__(self, other: AnyVar) -> RandomVar:
         return self.mul(other)
 
-    def __truediv__(self, other):
+    def __truediv__(self, other: AnyVar) -> RandomVar:
         return self.div(other)
 
-    def __floordiv__(self, other):
+    def __floordiv__(self, other: AnyVar) -> RandomVar:
         return self.floordiv(other)
 
-    def __matmul__(self, other):
+    def __matmul__(self, other: AnyVar) -> RandomVar:
         return self.matmul(other)
+
+    def __eq__(self, other: AnyVar) -> RandomVar:
+        return self.equal(other)
+
+    def __ne__(self, other: AnyVar) -> RandomVar:
+        return self.not_equal(other)
+
+    def __lt__(self, other: AnyVar) -> RandomVar:
+        return self.less(other)
+
+    def __le__(self, other: AnyVar) -> RandomVar:
+        return self.less_equal(other)
+
+    def __gt__(self, other: AnyVar) -> RandomVar:
+        return self.greater(other)
+
+    def __ge__(self, other: AnyVar) -> RandomVar:
+        return self.greater_equal(other)
 
 
 class Op1(Sampler):
-    def __init__(self, sampler, op):
+    """
+    A sampler obtained by applying a function to another sampler.
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return self.sampler.param.shape
+
+        def mean(self, nb_samples=None, *args, **kwargs):
+            if nb_samples:
+                return super().mean(nb_samples, *args, **kwargs)
+            # approximation: assumes peaked sampler
+            return self.op(self.sampler.param.mean())
+
+        def min(self, nb_samples=None, *args, **kwargs):
+            if nb_samples:
+                return super().min(nb_samples, *args, **kwargs)
+            # approximation: assumes monotonic function
+            return torch.minimum(self.op(self.sampler.param.min()),
+                                 self.op(self.sampler.param.max()))
+
+        def max(self, nb_samples=None, *args, **kwargs):
+            if nb_samples:
+                return super().max(nb_samples, *args, **kwargs)
+            # approximation: assumes monotonic function
+            return torch.maximum(self.op(self.sampler.param.min()),
+                                 self.op(self.sampler.param.max()))
+
+    def __init__(self, sampler: AnyVar, op: Callable[[Tensor], Tensor]):
+        """
+        Parameters
+        ----------
+        sampler : number or Sampler
+            A (random) variable
+        op : callable
+            A function that takes a tensor as input and returns a tensor
+        """
         if not isinstance(sampler, Sampler):
             sampler = Dirac(sampler)
-        self.sampler = sampler
-        self.op = op
+        self.param = self.Parameters(self, sampler=sampler, op=op)
 
-    def __call__(self, n=tuple()):
-        return self.op(self.sampler(n))
-
-    @property
-    def mean(self):
-        # approximation: assumes peaked sampler
-        return self.op(self.sampler.mean)
+    def __call__(self, batch=tuple(), **backend):
+        return self.param.op(self.param.sampler(batch, **backend))
 
 
 class Op2(Sampler):
-    def __init__(self, sampler1, sampler2, op):
+    """
+    A sampler obtained by applying a function to two other samplers.
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(self.sampler1.param.shape,
+                                          self.sampler2.param.shape)
+
+        def mean(self, nb_samples=None, *args, **kwargs):
+            if nb_samples:
+                return super().mean(nb_samples, *args, **kwargs)
+            # approximation: assumes peaked sampler
+            return self.op(self.sampler1.param.mean(),
+                           self.sampler2.param.mean())
+
+    def __init__(self, sampler1: AnyVar, sampler2: AnyVar,
+                 op: Callable[[Tensor, Tensor], Tensor]):
+        """
+        Parameters
+        ----------
+        sampler1 : number or Sampler
+            A (random) variable
+        sampler2 : number or Sampler
+            A (random) variable
+        op : callable
+            A function that takes two tensors as input and returns a tensor
+        """
         if not isinstance(sampler1, Sampler):
             sampler1 = Dirac(sampler1)
         if not isinstance(sampler2, Sampler):
             sampler2 = Dirac(sampler2)
-        self.sampler1 = sampler1
-        self.sampler2 = sampler2
-        self.op = op
+        self.param = self.Parameters(
+            self, sampler1=sampler1, sampler2=sampler2, op=op)
 
-    def __call__(self, n=tuple()):
-        return self.op(self.sampler1(n), self.sampler2(n))
-
-    @property
-    def mean(self):
-        # approximation: assumes peaked sampler
-        return self.op(self.sampler1.mean, self.sampler2.mean)
+    def __call__(self, batch=tuple(), **backend):
+        x = self.param.sampler1(batch, **backend)
+        y = self.param.sampler2(batch, **backend)
+        x, y = to_tensor(x, y, **backend)
+        return self.param.op(x, y)
 
 
 class OpN(Sampler):
-    def __init__(self, samplers, op):
+    """
+    A sampler obtained by applying a function to `N` other samplers.
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(*[
+                f.param.shape for f in self.samples
+            ])
+
+        def mean(self, nb_samples=None, *args, **kwargs):
+            if nb_samples:
+                return super().mean(nb_samples, *args, **kwargs)
+            # approximation: assumes peaked sampler
+            return self.op([f.param.mean() for f in self.samplers])
+
+    def __init__(self, samplers, op: Callable[..., Tensor]):
+        """
+        Parameters
+        ----------
+        samplers : list[number or Sampler]
+            A list of (random) variables
+        op : callable
+            A function that takes N tensors as input and returns a tensor
+        """
         samplers = [Dirac(f) if not isinstance(f, Sampler) else f
                     for f in samplers]
-        self.samplers = samplers
-        self.op = op
+        self.param = self.Parameters(self, samplers=samplers, op=op)
 
-    def __call__(self, n=tuple()):
-        return self.op(*[f(n) for f in self.samplers])
-
-    @property
-    def mean(self):
-        # approximation: assumes peaked sampler
-        return self.op([f.mean for f in self.samplers])
+    def __call__(self, batch=tuple(), **backend):
+        x = [f(batch, **backend) for f in self.param.samplers]
+        x = to_tensor(*x, **backend)
+        return self.param.op(*x)
 
 
 class Dirac(Sampler):
-    """Fixed parameter"""
-    def __init__(self, mean):
-        self.mean = to_tensor(mean)
+    """
+    A fixed value
 
-    def __call__(self, n=tuple()):
-        n = make_tuple(n or [])
-        mean = to_tensor(self.mean)
-        return torch.full(n, mean) if n else mean
+    !!! example "Signatures"
+        ```python
+        Dirac()               # default (0)
+        Dirac(0)              # positional variant
+        Dirac(value=0)        # keyword variant
+        Dirac(loc=0)          # alias
+        Dirac(mean=0)         # alias
+        ```
+    """
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return self.value.shape
+
+        def mean(self, *args, **kwargs):
+            return self.value
+
+        def var(self, *args, **kwargs):
+            return self.value.new_zeros([])
+
+        scale = std = var
+        loc = min = max = mean
+
+    def __init__(self, *args, **kwargs):
+        if len(args) > 1:
+            raise ValueError('Too many positional arguments')
+        if len(kwargs) > 1:
+            raise ValueError('Too many keyword arguments')
+        if len(args) == 1 and kwargs:
+            raise ValueError('Positional and keyword arguments')
+        if any(map(lambda x: x not in ['mean', 'loc'], kwargs)):
+            raise ValueError('Unknown keyword argument')
+        if args:
+            kwargs.setdefault('value', args[0])
+        value = _get_aliases(kwargs, ['value', 'mean', 'loc'], 0)
+        value = to_tensor(value, dtype=get_default_dtype())
+        self.param = self.Parameters(self, value=value)
+
+    def __call__(self, batch=tuple(), **backend):
+        batch = make_tuple(batch or [])
+        value = self.param.value.to(**backend)
+        return (value.new_empty([batch + self.param.shape]).copy_(value)
+                if batch else value.clone())
 
 
 class Uniform(Sampler):
+    """
+    A uniform distribution
+
+    !!! example "Signatures"
+        ```python
+        Uniform()                   # default: (a=0, b=1)
+        Uniform(b)                  # default min: (a=0)
+        Uniform(a, b)               # positional variant
+        Uniform(a=0, b=1)           # keyword variant
+
+        # Aliases
+        Uniform(*, min=VALUE)       # Alias for a
+        Uniform(*, max=VALUE)       # Alias for b
+        Uniform(*, mean=VALUE)      # Specify mean (default width is 1)
+        Uniform(*, fwhm=VALUE)      # Specify width. Must also set mean or loc
+        Uniform(*, std=VALUE)       # Specify standard deviation
+        Uniform(*, var=VALUE)       # Specify variance
+        Uniform(*, loc=VALUE)       # Alias for mean
+        Uniform(*, scale=VALUE)     # Alias for std
+        ```
+    """
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(self.a.shape, self.b.shape)
+
+        def min(self, *args, **kwargs):
+            return self.a
+
+        def max(self, *args, **kwargs):
+            return self.b
+
+        def mean(self, *args, **kwargs):
+            return (self.a + self.b) / 2
+
+        def fwhm(self, *args, **kwargs):
+            """Full-width at half-maximum"""
+            return (self.b - self.a).abs()
+
+        def var(self, *args, **kwargs):
+            return self.fwhm().square() / 12
+
+        def std(self, *args, **kwargs):
+            return self.fwhm() / (12 ** 0.5)
+
+        scale = std
+
     def __init__(self, *args, **kwargs):
-        if 'mean' in kwargs:
-            self.mean = to_tensor(kwargs['mean'])
+        keys = list(kwargs.keys())
+        keys_min = ('min', 'a')
+        keys_max = ('max', 'b')
+        keys_loc = ('mean', 'loc')
+        keys_scl = ('fwhm', 'std', 'var', 'scale')
+        keys_all = keys_min + keys_max + keys_loc + keys_scl
+        nb_min = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_min))
+        nb_max = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_max))
+        nb_loc = sum(map(lambda x: keys.count(x), keys_loc))
+        nb_scl = sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_all for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if (nb_min + nb_max) and (nb_loc + nb_scl):
+            raise ValueError('Bound and nonbound arguments')
+        if (nb_min > 1) or (nb_max > 1) or (nb_loc > 1) or (nb_scl > 1):
+            raise ValueError('Incompatible arguments')
+        if nb_scl and not nb_loc:
+            raise ValueError('Location argument without scale argument')
+
+        if nb_loc:
+            loc = _get_aliases(kwargs, ['mean', 'loc'])
             if 'fwhm' in kwargs:
-                self.fwhm = to_tensor(kwargs['fwhm'])
-                self.scale = self.fwhm / pymath.sqrt(12)
+                fwhm = kwargs['fwhm']
+            elif 'var' in kwargs:
+                fwhm = (12 * kwargs['var']) ** 0.5
+            elif 'std' in kwargs or 'scale' in kwargs:
+                std = _get_aliases(kwargs, ['std', 'scale'])
+                fwhm = (12 ** 0.5) * std
             else:
-                self.scale = to_tensor(kwargs.get('scale', 0))
-                self.fwhm = self.scale * pymath.sqrt(12)
-            self.min = self.mean - self.fwhm / 2
-            self.max = self.mean + self.fwhm / 2
+                fwhm = 1
+            loc, fwhm = to_tensor(loc, fwhm, dtype=float)
+            a = loc - fwhm / 2
+            b = loc + fwhm / 2
         else:
-            if len(args) == 1:
-                self.max = to_tensor(args[0])
-                self.min = torch.zeros([]).to(self.max)
-            elif len(args) == 2:
-                self.min = to_tensor(args[0])
-                self.max = to_tensor(args[1])
+            if len(args) == 2:
+                a, b = args
+            elif len(args) == 1:
+                if 'max' in kwargs or 'b' in kwargs:
+                    a = args[0]
+                    b = _get_aliases(kwargs, ['max', 'b'], 1)
+                else:
+                    b = args[0]
+                    a = _get_aliases(kwargs, ['min', 'a'], 0)
             else:
-                self.max = kwargs['max']
-                self.min = kwargs.get('min', torch.zeros([]).to(self.max))
-            self.fwhm = self.max - self.min
-            self.scale = self.fwhm / pymath.sqrt(12)
-            self.mean = (self.min + self.max) / 2
+                b = _get_aliases(kwargs, ['max', 'b'], 1)
+                a = _get_aliases(kwargs, ['min', 'a'], 0)
+            a, b = to_tensor(a, b, dtype=float)
+        self.param = self.Parameters(self, a=a, b=b)
 
-        if self.scale.any():
-            self.sampler = distributions.Uniform(self.min, self.max).sample
-        else:
-            self.sampler = Dirac(self.mean)
-
-    def __call__(self, n=tuple()):
-        return self.sampler(make_tuple(n or []))
+    def __call__(self, batch=tuple(), **backend):
+        batch = make_tuple(batch or [])
+        a = to_tensor(self.param.a, **backend)
+        b = to_tensor(self.param.b, **backend)
+        return distributions.Uniform(a, b).sample(batch)
 
 
 class RandInt(Sampler):
+    """
+    A discrete uniform distribution, with both bounds included.
+
+    !!! example "Signatures"
+        ```python
+        RandInt()                   # default: (a=0, b=1)
+        RandInt(b)                  # default min: (a=0)
+        RandInt(a, b)               # positional variant
+        RandInt(a=0, b=1)           # keyword variant
+
+        # Aliases
+        RandInt(*, min=VALUE)       # Alias for a
+        RandInt(*, max=VALUE)       # Alias for b
+        RandInt(*, mean=VALUE)      # Specify mean (default width is 1)
+        RandInt(*, fwhm=VALUE)      # Specify width. Must also set mean or loc
+        RandInt(*, std=VALUE)       # Specify standard deviation
+        RandInt(*, var=VALUE)       # Specify variance
+        RandInt(*, loc=VALUE)       # Alias for mean
+        RandInt(*, scale=VALUE)     # Alias for std
+        ```
+    """
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(self.a.shape, self.b.shape)
+
+        def min(self, *args, **kwargs):
+            return self.a
+
+        def max(self, *args, **kwargs):
+            return self.b
+
+        def mean(self, *args, **kwargs):
+            return (self.a + self.b) / 2
+
+        def fwhm(self, *args, **kwargs):
+            """Full-width at half-maximum"""
+            return (self.b - self.a).abs() + 1
+
+        def var(self, *args, **kwargs):
+            return (self.fwhm().square() - 1) / 12
+
+        def std(self, *args, **kwargs):
+            return self.var().sqrt()
+
+        scale = std
+
     def __init__(self, *args, **kwargs):
-        if len(args) == 1:
-            self.max = to_tensor(args[0], dtype=torch.long)
-            self.min = torch.zeros([]).to(self.max)
-        elif len(args) == 2:
-            self.min = to_tensor(args[0], dtype=torch.long)
-            self.max = to_tensor(args[1], dtype=torch.long)
-        else:
-            self.max = to_tensor(kwargs['max'], dtype=torch.long)
-            self.min = to_tensor(kwargs.get('min', to_tensor(0).to(self.max)), dtype=torch.long)
-        self.fwhm = self.max - self.min + 1
-        self.scale = (self.fwhm * self.fwhm - 1) ** 0.5 / pymath.sqrt(12)
-        self.mean = (self.min + self.max) / 2
+        keys = list(kwargs.keys())
+        keys_min = ('min', 'a')
+        keys_max = ('max', 'b')
+        keys_loc = ('mean', 'loc')
+        keys_scl = ('fwhm', 'std', 'var', 'scale')
+        keys_all = keys_min + keys_max + keys_loc + keys_scl
+        nb_min = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_min))
+        nb_max = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_max))
+        nb_loc = sum(map(lambda x: keys.count(x), keys_loc))
+        nb_scl = sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_all for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if (nb_min + nb_max) and (nb_loc + nb_scl):
+            raise ValueError('Bound and nonbound arguments')
+        if (nb_min > 1) or (nb_max > 1) or (nb_loc > 1) or (nb_scl > 1):
+            raise ValueError('Incompatible arguments')
+        if nb_scl and not nb_loc:
+            raise ValueError('Location argument without scale argument')
 
-        if self.scale:
-            self.sampler = lambda x: distributions.Uniform(self.min-0.5, self.max+0.5).sample(x).round().to(torch.long)
+        if nb_loc:
+            loc = _get_aliases(kwargs, ['mean', 'loc'])
+            if 'fwhm' in kwargs:
+                fwhm = kwargs['fwhm']
+            elif 'var' in kwargs:
+                fwhm = (12 * kwargs['var'] + 1) ** 0.5 - 1
+            elif 'std' in kwargs or 'scale' in kwargs:
+                std = _get_aliases(kwargs, ['std', 'scale'])
+                var = std * std
+                fwhm = (12 * var + 1) ** 0.5 - 1
+            else:
+                fwhm = 1
+            loc, fwhm = to_tensor(loc, fwhm, dtype=float)
+            a = loc - fwhm / 2
+            b = loc + fwhm / 2
+            a, b = a.round().long(), b.round().long()
         else:
-            self.sampler = Dirac(self.mean)
+            if len(args) == 2:
+                a, b = args
+            elif len(args) == 1:
+                if 'max' in kwargs or 'b' in kwargs:
+                    a = args[0]
+                    b = _get_aliases(kwargs, ['max', 'b'])
+                else:
+                    b = args[0]
+                    a = _get_aliases(kwargs, ['min', 'a'], 0)
+            else:
+                b = _get_aliases(kwargs, ['max', 'b'])
+                a = _get_aliases(kwargs, ['min', 'a'], 0)
+            a, b = to_tensor(a, b, dtype=int)
+        self.param = self.Parameters(self, a=a, b=b)
 
-    def __call__(self, n=tuple()):
-        return self.sampler(make_tuple(n or []))
+    def __call__(self, batch=tuple(), **backend):
+        batch = make_tuple(batch or [])
+        dtype = backend.pop('dtype', None)
+        if not dtype:
+            dtype = self.param.a.dtype
+        if dtype.is_floating_point:
+            dtype = torch.long
+        if not self.param.a.dtype.is_floating_point:
+            backend['dtype'] = torch.get_default_dtype()
+        a = to_tensor(self.param.a, **backend)
+        b = to_tensor(self.param.b, **backend)
+        x = distributions.Uniform(a-0.5, b+0.5).sample(batch)
+        return x.round().to(dtype)
 
 
 class Normal(Sampler):
-    def __init__(self, mean, scale=0):
-        self.mean = to_tensor(mean)
-        self.scale = to_tensor(scale)
+    """
+    A Normal/Gaussian distribution
 
-        if self.scale:
-            self.sampler = distributions.Normal(self.mean, self.scale).sample
-        else:
-            self.sampler = Dirac(mean)
+    !!! example "Signatures"
+        ```python
+        Normal()                    # default: (mu=0, sigma=1)
+        Normal(sigma)               # default mean: (mu=0)
+        Normal(mu, sigma)           # positional variant
+        Normal(mu=0, sigma=1)       # keyword variant
 
-    def __call__(self, n=tuple()):
-        return self.sampler(make_tuple(n or []))
+        # Aliases
+        Normal(*, mean=VALUE)       # Alias for mu
+        Normal(*, std=VALUE)        # Alias for sigma
+        Normal(*, var=VALUE)        # Specify variance (sigma**2)
+        Normal(*, fwhm=VALUE)       # Specify width (~ 2.355*sigma)
+        Normal(*, loc=VALUE)        # Alias for mu
+        Normal(*, scale=VALUE)      # Alias for sigma
+        ```
+    """
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(self.mu.shape, self.sigma.shape)
+
+        def min(self, *args, **kwargs):
+            return self.mu.new_full(self.shape, -float('inf'))
+
+        def max(self, *args, **kwargs):
+            return self.mu.new_full(self.shape, float('inf'))
+
+        def mean(self, *args, **kwargs):
+            return self.mu
+
+        def std(self, *args, **kwargs):
+            return self.sigma
+
+        def var(self, *args, **kwargs):
+            return self.sigma.square()
+
+        def fwhm(self, *args, **kwargs):
+            """Full-width at half-maximum"""
+            return self.sigma * (2 * math.sqrt(2 * math.log(2)))
+
+        loc = mean
+        scale = std
+
+    def __init__(self, *args, **kwargs):
+        keys = list(kwargs.keys())
+        keys_loc = ('mean', 'loc')
+        keys_scl = ('fwhm', 'std', 'var', 'scale')
+        nb_loc = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_loc))
+        nb_scl = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_loc + keys_scl for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if (nb_loc > 1) or (nb_scl > 1):
+            raise ValueError('Incompatible arguments')
+
+        mu, sigma = 0, 1
+        if len(args) == 2:
+            mu = args[0]
+            sigma = args[1]
+        elif len(args) == 1:
+            sigma = args[0]
+        mu = _get_aliases(kwargs, ['mu', 'mean', 'loc'], mu)
+        sigma = _get_aliases(kwargs, ['sigma', 'std', 'scale'], sigma)
+        if 'var' in kwargs:
+            sigma = kwargs['var'] ** 0.5
+        elif 'fwhm' in kwargs:
+            sigma = kwargs['fwhm'] / (2 * math.sqrt(2 * math.log(2)))
+
+        mu, sigma = to_tensor(mu, sigma, dtype=float)
+        self.param = self.Parameters(self, mu=mu, sigma=sigma)
+
+    def __call__(self, batch=tuple(), **backend):
+        batch = make_tuple(batch or [])
+        mu = to_tensor(self.param.mu, **backend)
+        sigma = to_tensor(self.param.sigma, **backend)
+        return distributions.Normal(mu, sigma).sample(batch)
 
 
 class LogNormal(Sampler):
+    """
+    A log-Normal distribution
 
-    def __init__(self, mean, scale=0):
-        self.mean = to_tensor(mean)
-        self.scale = to_tensor(scale)
-        if self.scale:
-            var = self.scale * self.scale
-            var_log = (1 + var / self.mean.square()).log().clamp_min(0)
-            if not var_log:
-                self.sampler = Dirac(mean)
-            else:
-                mean_log = self.mean.log() - var_log / 2
-                scale_log = var_log.sqrt()
-                self.mean_log = mean_log
-                self.scale_log = scale_log
-                self.sampler = distributions.LogNormal(mean_log, scale_log).sample
-        else:
-            self.sampler = Dirac(mean)
+    !!! example "Signatures"
+        ```python
+        LogNormal()                    # default: (mu=0, sigma=1)
+        LogNormal(sigma)               # default mean: (mu=0)
+        LogNormal(mu, sigma)           # positional variant
+        LogNormal(mu=0, sigma=1)       # keyword variant
 
-    def __call__(self, n=tuple()):
-        return self.sampler(make_tuple(n or []))
+        # Aliases
+        LogNormal(*, logmean=VALUE)    # Alias for mu (mean of log)
+        LogNormal(*, logstd=VALUE)     # Alias for sigma (std of log)
+        LogNormal(*, logvar=VALUE)     # Specify variance of log (sigma**2)
+        LogNormal(*, mean=VALUE)       # Specify the mean
+        LogNormal(*, var=VALUE)        # Specify variance
+        LogNormal(*, std=VALUE)        # Specify the standard deviation
+        LogNormal(*, loc=VALUE)        # Alias for mu
+        LogNormal(*, scale=VALUE)      # Alias for sigma
+        ```
+    """
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(self.mu.shape, self.sigma.shape)
+
+        def min(self, *args, **kwargs):
+            return self.mu.new_zeros(self.shape, -float('inf'))
+
+        def max(self, *args, **kwargs):
+            return self.mu.new_full(self.shape, float('inf'))
+
+        def logmean(self, *args, **kwargs):
+            return self.mu
+
+        def logstd(self, *args, **kwargs):
+            return self.sigma
+
+        def logvar(self, *args, **kwargs):
+            return self.sigma.square()
+
+        def mean(self, *args, **kwargs):
+            return (self.mu + 0.5 * self.sigma.square()).exp()
+
+        def var(self, *args, **kwargs):
+            return self.mean().square() * (self.sigma.square().exp() - 1)
+
+        loc = logmean
+        scale = logstd
+
+    def __init__(self, *args, **kwargs):
+        keys = list(kwargs.keys())
+        keys_loc = ('mean', 'loc', 'logmean')
+        keys_scl = ('fwhm', 'std', 'var', 'scale', 'logstd', 'logvar')
+        nb_loc = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_loc))
+        nb_scl = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_loc + keys_scl for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if (nb_loc > 1) or (nb_scl > 1):
+            raise ValueError('Incompatible arguments')
+
+        # log-parameters
+        mu, sigma = 0, 1
+        if len(args) == 2:
+            mu = args[0]
+            sigma = args[1]
+        elif len(args) == 1:
+            sigma = args[0]
+        mu = _get_aliases(kwargs, ['mu', 'logmean', 'loc'], mu)
+        sigma = _get_aliases(kwargs, ['sigma', 'logstd', 'scale'], sigma)
+        if 'logvar' in kwargs:
+            sigma = kwargs['logvar'] ** 0.5
+        if 'std' in kwargs:
+            kwargs['var'] = kwargs.pop('std') ** 2
+
+        # exp-parameters
+        if 'mean' in kwargs and 'var' in kwargs:
+            mean, var = to_tensor(kwargs['mean'], kwargs['var'], dtype=float)
+            sigma2 = (1 + var / mean.square()).log().clamp_min(0)
+            mu = mean.log() - sigma2 / 2
+            sigma = sigma2.sqrt()
+        elif 'mean' in kwargs:
+            mean, sigma = to_tensor(kwargs['mean'], sigma, dtype=float)
+            mu = mean.log() - 0.5 * self.sigma.square()
+        elif 'var' in kwargs:
+            mu, var = to_tensor(mu, kwargs['var'])
+            var = var / mu.exp().square()
+            delta = (1 - 4 * var).clamp_min_(0)
+            sigma = (1 + delta.sqrt()) / 2
+
+        mu, sigma = to_tensor(mu, sigma, dtype=float)
+        self.param = self.Parameters(self, mu=mu, sigma=sigma)
+
+    def __call__(self, batch=tuple(), **backend):
+        batch = make_tuple(batch or [])
+        mu = to_tensor(self.param.mu, **backend)
+        sigma = to_tensor(self.param.sigma, **backend)
+        return distributions.LogNormal(mu, sigma).sample(batch)

@@ -4,7 +4,8 @@ import datetime
 
 class SaveExp(object):
     """
-    A class for saving experimental results in a specific directory according to common nomenclature
+    A class for saving experimental results in a specific directory
+    according to common nomenclature
     """
     # author: Etienne Chollet
 
@@ -12,18 +13,24 @@ class SaveExp(object):
         """
         Initialize object with a root directory path.
 
-        Args:
-        - root_path (str): the path to the directory where experiments will be saved.
+        Parameters
+        ----------
+        root_path : str
+            the path to the directory where experiments will be saved.
         """
-        self.root_path = root_path  # Path where experiments (folders) will be saved
+        self.root_path = root_path
 
     def nextDir(self):
         """
-        Creates a new experiment folder in self.root_path according to naming system
+        Creates a new experiment folder in self.root_path according to
+        naming system
 
-        Returns:
-        - exp_abs_path (str): the absolute path to the new experiment folder.
-        - exp_dir_name (str): the name of the new experiment folder.
+        Returns
+        -------
+        exp_abs_path : str
+            the absolute path to the new experiment folder.
+        exp_dir_name : str
+            the name of the new experiment folder.
         """
         # get list of all directories in root_path
         preexisting_dirs = os.listdir(self.root_path)
@@ -52,8 +59,10 @@ class SaveExp(object):
         """
         Creates a documentation file for experiment in experiment folder
 
-        Returns:
-        - exp_abs_path (str): the absolute path to the new experiment folder.
+        Returns
+        -------
+        exp_abs_path : str
+            the absolute path to the new experiment folder.
         """
         # get the path and name of the new experiment directory
         exp_abs_path, exp_dir_name = self.nextDir()
@@ -64,7 +73,12 @@ class SaveExp(object):
         # create the documentation file and write the initial content
         file_obj = open(exp_documentation_abs_path, "x")
         file_obj.write(
-            f"# Experiment Title: \n\n# Date: {date}\n\n# Objective:\n- \n\n# Notes:\n-  ")
+            f"# Experiment Title: \n\n"
+            f"# Date: {date}\n\n"
+            f"# Objective:\n"
+            f"- \n\n"
+            f"# Notes:\n"
+            f"-  ")
         file_obj.close()
 
         print(
@@ -73,9 +87,12 @@ class SaveExp(object):
 
     def main(self):
         """
-        Calls the expDocumentation method to create the experiment directory and documentation file.
+        Calls the expDocumentation method to create the experiment
+        directory and documentation file.
 
-        Returns:
-        - exp_abs_path (str): the absolute path to the new experiment folder.
+        Returns
+        -------
+        exp_abs_path : str
+            the absolute path to the new experiment folder.
         """
         return self.expDocumentation()

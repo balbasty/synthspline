@@ -81,7 +81,8 @@ class Brent:
             f = closure(a)
 
             # check progress and update bracket
-            a0, a1, a2, f0, f1, f2 = bracket_post_closure(a, a0, a1, a2, f, f0, f1, f2)
+            (a0, a1, a2, f0, f1, f2) \
+                = bracket_post_closure(a, a0, a1, a2, f, f0, f1, f2)
 
         return a0, a1, a2, f0, f1, f2
 
@@ -229,7 +230,11 @@ def search_get_mask_nomin(a0, b0, b1, s, d, d1, tiny):
     # - jump is larger than half the last jump, or
     # - new point is too close from brackets
     a = a0 + d
-    return (s < 0) | (d.abs() > d1.abs() / 2) | ~((b0 + tiny < a) & (a < b1 - tiny))
+    return (
+        (s < 0) |
+        (d.abs() > d1.abs() / 2) |
+        ~((b0 + tiny < a) & (a < b1 - tiny))
+    )
 
 
 @torch.jit.script
@@ -244,7 +249,8 @@ def search_get_tiny(a0, tiny: float):
 
 
 @torch.jit.script
-def search_pre_closure(a0, a1, a2, f0, f1, f2, b0, b1, d1, igold: float, tiny: float):
+def search_pre_closure(a0, a1, a2, f0, f1, f2, b0, b1, d1,
+                       igold: float, tiny: float):
     # fit quadratic polynomial
     d, s = search_quad_min(a0, a1, a2, f0, f1, f2)
     d = d - a0
@@ -283,4 +289,3 @@ def search_post_closure(a, a0, a1, a2, f, f0, f1, f2, b0, b1):
     a2 = torch.where(mask, a, a2)
     f2 = torch.where(mask, f, f2)
     return a0, a1, a2, f0, f1, f2, b0, b1
-
