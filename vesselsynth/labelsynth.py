@@ -57,19 +57,27 @@ class SynthSplineParameters:
     """
 
     def __init__(self, *args, **kwargs):
+
+        def is_sampler(annot):
+            if annot is AnyVar:
+                return True
+            if isinstance(annot, type):
+                return issubclass(type, Sampler)
+            return False
+
         known_keys = list(self.__annotations__.keys())
         for key, arg in zip(known_keys, args):
-            if issubclass(self.__annotations__.get(key, object), AnyVar):
+            if is_sampler(self.__annotations__.get(key, object)):
                 arg = setup_sampler(arg)
             setattr(self, key, arg)
         for key, val in kwargs.items():
-            if issubclass(self.__annotations__.get(key, object), AnyVar):
+            if is_sampler(self.__annotations__.get(key, object)):
                 val = setup_sampler(val)
             setattr(self, key, val)
         for key in known_keys[len(args):]:
             if key not in kwargs:
                 val = getattr(self, key)
-                if issubclass(self.__annotations__.get(key, object), AnyVar):
+                if is_sampler(self.__annotations__.get(key, object)):
                     val = setup_sampler(val)
                 setattr(self, key, val)
 
@@ -113,6 +121,8 @@ class SynthSplineParameters:
 class SynthSplineBlock(nn.Module):
     """
     A generic synthesis machine for spline-based trees.
+
+    Parameters and their default values are defined in the `defaults` subclass.
     """
 
     ReturnedType = namedtuple('ReturnedType', [
@@ -163,11 +173,11 @@ class SynthSplineBlock(nn.Module):
         Default : 95% of samples in [1.6, 2.5]
         """
         device: Union[torch.device, str] = None
+        """Device to use during rasterization: "cpu" or "cuda"."""
 
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.params = self.defaults(*args, **kwargs)
-        print(self.params.to_dict())
         for key, val in self.params.to_dict().items():
             setattr(self, key, val)
 
@@ -385,7 +395,9 @@ class SynthSplineBlock(nn.Module):
         curves = BSplineCurves(curves)
         curves.to(self.device)
         vessels, labels, dist = curves.rasterize(self.shape, mode='cosine')
+        print(f'Curves rasterized in {time.time() - start:.3f} sec')
 
+        start = time.time()
         levelmap = torch.zeros_like(labels)
         for i, l in enumerate(levels):
             levelmap.masked_fill_(labels == i+1, l)
@@ -393,10 +405,12 @@ class SynthSplineBlock(nn.Module):
         nblevelmap = torch.zeros_like(labels)
         for i, l in enumerate(nb_levels):
             nblevelmap.masked_fill_(labels == i+1, l)
+        print(f'Level maps computed in {time.time() - start:.3f} sec')
 
+        start = time.time()
         skeleton = torch.zeros_like(labels)
         for i, curve in enumerate(curves):
-            ind = curve.evaluate_equidistant(curve, 0.1)
+            ind = curve.evaluate_equidistant(0.1)
             ind = ind.round().long()
             ind = ind[(ind[:, 0] >= 0) & (ind[:, 0] < skeleton.shape[0])]
             ind = ind[(ind[:, 1] >= 0) & (ind[:, 1] < skeleton.shape[1])]
@@ -405,7 +419,9 @@ class SynthSplineBlock(nn.Module):
                 + ind[:, 1] * skeleton.shape[2] \
                 + ind[:, 0] * skeleton.shape[2] * skeleton.shape[1]
             skeleton.view([-1])[ind] = i+1
+        print(f'Skeleton computed in {time.time() - start:.3f} sec')
 
+        start = time.time()
         branchmap = torch.zeros_like(vessels)
         id = identity_grid(branchmap.shape, device=branchmap.device)
         for branch in branchings:
@@ -418,8 +434,7 @@ class SynthSplineBlock(nn.Module):
                 loc = loc.round().long().tolist()
                 if all(0 <= c < s for c, s in zip(loc, branchmap.shape)):
                     branchmap[tuple(loc)] = True
-
-        print(f'Curves rasterized in {time.time() - start:.3f} sec')
+        print(f'Branch map computed in {time.time() - start:.3f} sec')
 
         return self.ReturnedType(
             vessels[None, None],

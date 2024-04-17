@@ -1,4 +1,4 @@
-__all__ = ['LabelApp']
+__all__ = ['LabelApp', 'ImageApp']
 import os
 import sys
 import torch
@@ -8,6 +8,7 @@ from textwrap import dedent
 from tempfile import gettempdir
 from vesselsynth import backend
 from vesselsynth.labelsynth import SynthSplineBlock
+from vesselsynth.imagezoo import SynthSplineDataset
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 
@@ -35,12 +36,7 @@ class LabelApp:
         self.default_n = n
         self.default_root = root or gettempdir()
         self.default_device = 'cuda'
-        # init
         self.appname = 'python <path_to_script.py>'
-        self.start = 0
-        self.stop = self.default_n
-        self.root = self.default_root
-        self.device = 'cuda'
 
     def run(self):
         """
@@ -56,7 +52,7 @@ class LabelApp:
                 {self.appname} [[<first>] <last>] [-o <output>] [-d <device>] [-s <shape]
 
             description:
-                Generate synthetic axons volumes indexed from <first> to <last>,
+                Generate synthetic spline labels indexed from <first> to <last>,
                 with shape <shape>, using device <device> and and write them
                 in directory <output>.
 
@@ -64,7 +60,7 @@ class LabelApp:
                 first  = 0
                 last   = {self.default_n}
                 shape  = {self.default_shape}
-                device = 'cuda' if available else 'cpu'
+                device = "cuda" if available else "cpu"
                 output = {self.default_root}
             """  # noqa: E501
         ))
@@ -78,6 +74,12 @@ class LabelApp:
             print(help)
             sys.exit()
 
+        self.start = 0
+        self.stop = self.default_n
+        self.shape = self.default_shape
+        self.device = self.default_device
+        self.root = self.default_root
+
         # read index range to synthesize
         positionals = []
         while argv:
@@ -85,7 +87,6 @@ class LabelApp:
                 break
             positionals += [argv.pop(0)]
         if len(positionals) == 1:
-            self.start = 0
             self.stop = int(positionals.pop(0))
         elif len(positionals) == 2:
             self.start = int(positionals.pop(0))
@@ -157,3 +158,158 @@ class LabelApp:
                  f'{root}/{n:04d}_branch.nii.gz')
         nib.save(nib.Nifti1Image(skl.squeeze().cpu().numpy(), affine, h),
                  f'{root}/{n:04d}_skeleton.nii.gz')
+
+
+class ImageApp:
+    """
+    Utility class to create a command-line app that synthesizes images.
+    """
+
+    def __init__(self, klass, inp_keys=['label'], out_keys=['image', 'ref'],
+                 n=10, inp='.', out=None):
+        """
+        Parameters
+        ----------
+        klass
+            A `Synth*Image` class.
+        keys : [list of] str
+            Types of synthetic labels to use for synthesis.
+        n : int
+            The default number of images per label to synthesize.
+        root : str
+            The default input folder.
+        """
+        self.klass = klass
+        self.inp_keys = inp_keys
+        self.out_keys = out_keys
+        self.default_n = n
+        self.default_inp = inp
+        self.default_out = out
+        self.default_device = 'cuda'
+        self.default_subset = None
+        self.appname = 'python <path_to_script.py>'
+
+    def run(self):
+        """
+        Parse the current command line arguments and run the synthesis
+        """
+        self.parse()
+        self.synth_all()
+
+    def help(self):
+        return (dedent(
+            f"""
+            usage:
+                {self.appname} [<input>] [-o <output>] [-n <n>] [-s <subset>] [-d <device>]
+
+            description:
+                Generate <n> synthetic intensity volumes for each label map
+                found in <input> and write them in directory <output>.
+                A <subset> of label volumes can be specified as either
+                a list of indices, or a range of indices ("<begin>:<end>",
+                or "<begin>:" or ":<end>" or ":").
+
+            defaults:
+                input  = "."
+                output = "<input>/images"
+                n      = {self.default_n}
+                subset = ":"
+                device = "cuda" if available else "cpu"
+            """  # noqa: E501
+        ))
+
+    def parse(self, argv=None):
+        """Parse the command line arguments"""
+        argv = list(argv or sys.argv)
+        self.appname = argv.pop(0)
+
+        if '-h' in argv or '--help' in argv:
+            print(help)
+            sys.exit()
+
+        # set defaults
+        self.inp = self.default_inp
+        self.out = None
+        self.n = self.default_n
+        self.subset = None
+        self.device = self.default_device
+
+        # read index range to synthesize
+        positionals = []
+        while argv:
+            if argv[0].startswith('-'):
+                break
+            positionals += [argv.pop(0)]
+        if len(positionals) == 1:
+            self.inp = positionals.pop(0)
+        if positionals:
+            raise ValueError('Too many positional arguments')
+
+        # read other options
+        while argv:
+            arg = argv.pop(0)
+            if arg in ('-o', '--output'):
+                self.out = argv.pop(0)
+                continue
+            if arg in ('-d', '--device'):
+                self.device = argv.pop(0)
+                continue
+            if arg in ('-n', '--nb-images'):
+                self.n = int(argv.pop(0))
+                continue
+            if arg in ('-s', '--subset'):
+                self.subset = []
+                while argv and not argv[0].startswith('-'):
+                    if ':' in argv[0]:
+                        arg = argv.pop(0).split(':')
+                        begin = end = step = None
+                        if len(arg) > 0:
+                            begin = int(arg[0]) if arg[0] else None
+                        if len(arg) > 1:
+                            end = int(arg[1]) if arg[1] else None
+                        if len(arg) > 2:
+                            step = int(arg[2]) if arg[2] else None
+                        self.subset += [slice(begin, end, step)]
+                    else:
+                        self.subset += [int(argv.pop(0))]
+                continue
+
+        # default out
+        if not self.out:
+            self.out = os.path.join(self.inp, 'images')
+
+        # check device is available
+        self.device = torch.device(self.device)
+        if self.device.type == 'cuda' and not torch.cuda.is_available():
+            print('CUDA not available, using CPU.')
+            self.device = 'cpu'
+
+    def synth_all(self):
+        """Instantiate synthesized and synthesize all patches"""
+        backend.jitfields = True
+        synth = self.klass()
+        dataset = SynthSplineDataset(self.inp, keys=self.inp_keys,
+                                     subset=self.subset)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=1)
+
+        # TODO: I don't really like everying in SynthExp.
+        #       We should make something a bit more programmable
+        out = SaveExp(self.out).main()
+        os.makedirs(out, exist_ok=True)
+
+        for i, dat in enumerate(loader):
+            dat = [x.to(self.device) for x in dat]
+            for j in range(self.n):
+                self.synth_one(synth, dat, i * self.n + j, out)
+
+    def synth_one(self, synth, dat, n, root):
+        """Synthesize the n-th patch"""
+        out = synth(*dat)
+        out = {key: x for key, x in zip(self.out_keys, out)}
+        affine = default_affine(list(out.values())[0].shape[-3:])
+        h = nib.Nifti1Header()
+
+        for key, val in out:
+            h.set_data_dtype(str(val.dtype).split('.')[-1])
+            nib.save(nib.Nifti1Image(val.squeeze().cpu().numpy(), affine, h),
+                     f'{root}/{n:04d}_{key}.nii.gz')

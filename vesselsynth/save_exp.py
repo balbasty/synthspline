@@ -33,7 +33,10 @@ class SaveExp(object):
             the name of the new experiment folder.
         """
         # get list of all directories in root_path
-        preexisting_dirs = os.listdir(self.root_path)
+        if os.path.isdir(self.root_path):
+            preexisting_dirs = os.listdir(self.root_path)
+        else:
+            preexisting_dirs = []
 
         # start numbering experiments at 1
         exp_n = 1
@@ -47,7 +50,7 @@ class SaveExp(object):
 
         # create the new experiment directory and get its absolute path
         exp_abs_path = f"{self.root_path}/{exp_dir_name}"
-        os.mkdir(exp_abs_path)
+        os.makedirs(exp_abs_path, exist_ok=True)
 
         # print message indicating where experiment was saved
         print('\n', '#' * 50, f'\n\n SAVING EXPERIMENT TO: {exp_abs_path}\n\n',
@@ -67,7 +70,8 @@ class SaveExp(object):
         # get the path and name of the new experiment directory
         exp_abs_path, exp_dir_name = self.nextDir()
         # create the path and name of the documentation file
-        exp_documentation_abs_path = f"{exp_abs_path}/{exp_dir_name}_documentation.txt"
+        exp_documentation_abs_path = \
+            f"{exp_abs_path}/{exp_dir_name}_documentation.txt"
         date = datetime.date.today()
 
         # create the documentation file and write the initial content
@@ -81,8 +85,9 @@ class SaveExp(object):
             f"-  ")
         file_obj.close()
 
-        print(
-            f'Edit experiment documentation at: {exp_documentation_abs_path}\n')
+        print(f'Edit experiment documentation at: '
+              f'{exp_documentation_abs_path}\n')
+
         return exp_abs_path
 
     def main(self):
