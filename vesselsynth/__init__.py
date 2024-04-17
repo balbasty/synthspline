@@ -1,10 +1,16 @@
-import interpol
+import interpol.backend
+try:
+    import distmap.backend
+except ImportError:
+    distmap = None
 
 
 class _Backend:
 
     def __init__(self) -> None:
         self._jitfields = interpol.backend.jitfields
+        if distmap:
+            distmap.backend.jitfields = self._jitfields
 
     @property
     def jitfields(self):
@@ -14,6 +20,8 @@ class _Backend:
     def jitfields(self, value):
         self._jitfields = value
         interpol.backend.jitfields = value
+        if distmap:
+            distmap.backend.jitfields = value
 
 
 backend = _Backend()

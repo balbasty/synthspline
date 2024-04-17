@@ -615,7 +615,7 @@ class SynthAxonImage(nn.Module):
                 cc.SmoothBernoulliDiskTransform,
                 dict(shape=cc.random.RandInt(2, 16),
                      prob=cc.random.Uniform(0, 0.02),
-                     radius=cc.random.Fixed(cc.random.Uniform(1, 10)),
+                     radius=cc.random.Uniform(1, 10),
                      returns='disks')
             )
             self.label_map = cc.RandomSmoothLabelMap(
