@@ -8,7 +8,7 @@ from textwrap import dedent
 from tempfile import gettempdir
 from vesselsynth import backend
 from vesselsynth.labelsynth import SynthSplineBlock
-from vesselsynth.imagezoo import SynthSplineDataset
+from vesselsynth.datasets import SynthSplineDataset
 from vesselsynth.utils import default_affine
 from vesselsynth.save_exp import SaveExp
 
@@ -171,7 +171,7 @@ class ImageApp:
         Parameters
         ----------
         klass
-            A `Synth*Image` class.
+            A `Synth*Image` class or instance.
         keys : [list of] str
             Types of synthetic labels to use for synthesis.
         n : int
@@ -287,7 +287,10 @@ class ImageApp:
     def synth_all(self):
         """Instantiate synthesized and synthesize all patches"""
         backend.jitfields = True
-        synth = self.klass()
+        if isinstance(self.klass, type):
+            synth = self.klass()
+        else:
+            synth = self.klass
         dataset = SynthSplineDataset(self.inp, keys=self.inp_keys,
                                      subset=self.subset)
         loader = torch.utils.data.DataLoader(dataset, batch_size=1)
@@ -300,7 +303,10 @@ class ImageApp:
         for i, dat in enumerate(loader):
             dat = [x.to(self.device) for x in dat]
             for j in range(self.n):
+                print(f'Synthesizing image {j+1}/{self.n} '
+                      f'from label {i+1}/{len(loader)}', end='\r')
                 self.synth_one(synth, dat, i * self.n + j, out)
+        print('')
 
     def synth_one(self, synth, dat, n, root):
         """Synthesize the n-th patch"""
@@ -309,7 +315,7 @@ class ImageApp:
         affine = default_affine(list(out.values())[0].shape[-3:])
         h = nib.Nifti1Header()
 
-        for key, val in out:
+        for key, val in out.items():
             h.set_data_dtype(str(val.dtype).split('.')[-1])
             nib.save(nib.Nifti1Image(val.squeeze().cpu().numpy(), affine, h),
                      f'{root}/{n:04d}_{key}.nii.gz')
