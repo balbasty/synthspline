@@ -12,7 +12,7 @@ import torch
 from torch import distributions, Tensor, get_default_dtype
 from typing import Union, Callable, Optional, Tuple
 from numbers import Number
-from .utils import make_tuple, to_tensor, import_fullname
+from synthspline.utils import make_tuple, to_tensor, import_fullname
 
 
 pymin, pymax = min, max

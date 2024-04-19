@@ -3,9 +3,9 @@ import torch
 from interpol import (
     grid_pull, grid_push, grid_grad, spline_coeff, identity_grid)
 import math as pymath
-from vesselsynth import backend
-from vesselsynth.brent import Brent
-from vesselsynth.utils import to_tensor
+from synthspline import backend
+from synthspline.brent import Brent
+from synthspline.utils import to_tensor
 
 
 # ======================================================================

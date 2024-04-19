@@ -1,8 +1,8 @@
 import torch
 from typing import Union, List
-from vesselsynth import random
-from vesselsynth.random import AnyVar
-from vesselsynth.labelsynth import SynthSplineBlock, SynthSplineParameters
+from synthspline import random
+from synthspline.random import AnyVar
+from synthspline.labelsynth import SynthSplineBlock, SynthSplineParameters
 
 
 class SynthVesselMicro(SynthSplineBlock):

@@ -1,5 +1,5 @@
-from vesselsynth.cli import ImageApp
-from vesselsynth.imagezoo import SynthAxonImage
+from synthspline.cli import ImageApp
+from synthspline.imagezoo import SynthAxonImage
 
 ImageApp(
     SynthAxonImage(),

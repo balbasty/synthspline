@@ -6,11 +6,11 @@ import yaml
 import nibabel as nib
 from textwrap import dedent
 from tempfile import gettempdir
-from vesselsynth import backend
-from vesselsynth.labelsynth import SynthSplineBlock
-from vesselsynth.datasets import SynthSplineDataset
-from vesselsynth.utils import default_affine
-from vesselsynth.save_exp import SaveExp
+from synthspline import backend
+from synthspline.labelsynth import SynthSplineBlock
+from synthspline.datasets import SynthSplineDataset
+from synthspline.utils import default_affine
+from synthspline.save_exp import SaveExp
 
 
 class LabelApp:

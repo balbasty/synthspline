@@ -4,9 +4,9 @@ from torch import nn
 from typing import Union, List
 from collections import namedtuple
 from interpol import identity_grid
-from vesselsynth.curves import BSplineCurve, BSplineCurves
-from vesselsynth.random import AnyVar, Sampler
-from vesselsynth import random
+from synthspline.curves import BSplineCurve, BSplineCurves
+from synthspline.random import AnyVar, Sampler
+from synthspline import random
 
 
 def setup_sampler(value):
