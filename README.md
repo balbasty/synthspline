@@ -1,4 +1,4 @@
-# synthspline
+# SynthSpline
 
 Synthetic tubular structures (vessels, axons) for NN pretraining
 
@@ -66,7 +66,7 @@ for _ in range(nb_samples):
     sample = synthesizer()
 ```
 
-Each sample is a named tuple with keys `['vessels', 'labels', 'levelmap',
+Each sample is a named tuple with keys `['prob', 'labels', 'levelmap',
 'nblevelmap', 'branchmap', 'skeleton', 'dist']`. Each key contains a
 tensor with a batch dimension, a (singleton) channel dimension and three
 spatial dimensions.

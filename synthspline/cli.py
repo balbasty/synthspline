@@ -136,11 +136,11 @@ class LabelApp:
 
     def synth_one(self, synth, n, root):
         """Synthesize the n-th patch"""
-        im, lab, lvl, nlvl, brch, skl, dist = synth()
-        affine = default_affine(im.shape[-3:])
+        prob, lab, lvl, nlvl, brch, skl, dist = synth()
+        affine = default_affine(prob.shape[-3:])
         h = nib.Nifti1Header()
 
-        nib.save(nib.Nifti1Image(im.squeeze().cpu().numpy(), affine, h),
+        nib.save(nib.Nifti1Image(prob.squeeze().cpu().numpy(), affine, h),
                  f'{root}/{n:04d}_prob.nii.gz')
         nib.save(nib.Nifti1Image(dist.squeeze().cpu().numpy(), affine, h),
                  f'{root}/{n:04d}_dist.nii.gz')

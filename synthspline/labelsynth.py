@@ -126,7 +126,7 @@ class SynthSplineBlock(nn.Module):
     """
 
     ReturnedType = namedtuple('ReturnedType', [
-        'vessels',
+        'prob',
         'labels',
         'levelmap',
         'nblevelmap',
@@ -339,8 +339,8 @@ class SynthSplineBlock(nn.Module):
 
         Returns
         -------
-        vessels : (batch, 1, *shape) tensor[float]
-            Vessels partial volume map.
+        prob : (batch, 1, *shape) tensor[float]
+            Partial volume map.
         labels : (batch, 1, *shape) tensor[int]
             Unique label of each spline.
             Every voxel that has a nonzero partial volume has a nonzero index.
@@ -366,7 +366,7 @@ class SynthSplineBlock(nn.Module):
         import time
         dim = len(self.shape)
 
-        # sample vessels
+        # sample splines
         volume = 1
         for s in self.shape:
             volume *= s
@@ -390,11 +390,11 @@ class SynthSplineBlock(nn.Module):
             branchings += branchings1
         print(f'Curves sampled in {time.time() - start:.2f} sec')
 
-        # draw vessels
+        # draw splines
         start = time.time()
         curves = BSplineCurves(curves)
         curves.to(self.device)
-        vessels, labels, dist = curves.rasterize(self.shape, mode='cosine')
+        prob, labels, dist = curves.rasterize(self.shape, mode='cosine')
         print(f'Curves rasterized in {time.time() - start:.3f} sec')
 
         start = time.time()
@@ -422,7 +422,7 @@ class SynthSplineBlock(nn.Module):
         print(f'Skeleton computed in {time.time() - start:.3f} sec')
 
         start = time.time()
-        branchmap = torch.zeros_like(vessels)
+        branchmap = torch.zeros_like(prob)
         id = identity_grid(branchmap.shape, device=branchmap.device)
         for branch in branchings:
             loc, radius = branch
@@ -437,7 +437,7 @@ class SynthSplineBlock(nn.Module):
         print(f'Branch map computed in {time.time() - start:.3f} sec')
 
         return self.ReturnedType(
-            vessels[None, None],
+            prob[None, None],
             labels[None, None],
             levelmap[None, None],
             nblevelmap[None, None],
