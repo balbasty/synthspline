@@ -1500,7 +1500,7 @@ class FisherBingham(Sampler):
         A1 = A + 0.5 * kappa[..., None, None] * A1
 
         # ACG envelope of the Bingham envelope
-        logM, b = _bacg_logbound(A1)
+        logM, b, _ = _bacg_logbound(A1)
         Omega = 0.5 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
@@ -1623,8 +1623,8 @@ class Bingham(Sampler):
         # https://arxiv.org/pdf/1310.8110
         batch = make_tuple(batch)
         A = to_tensor(self.param.A, **backend)
-        logM, b = _bacg_logbound(A)
-        Omega = 0.5 * A / b[..., None, None]
+        logM, b, _ = _bacg_logbound(A)
+        Omega = 2 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
         return rejection_sampling(
@@ -1688,7 +1688,7 @@ def _bacg_logbound(A, tol=1e-6, max_iter=1024):
         if delta.abs().max() < tol:
             break
 
-    return func(b), b
+    return func(b), b, lam
 
 
 class VonMisesFisher(Sampler):
@@ -1772,8 +1772,8 @@ class VonMisesFisher(Sampler):
         A.diagonal(0, -1, -2).add_(1)
 
         # ACG envelope of the Bingham envelope
-        logM, b = _bacg_logbound(A)
-        Omega = 0.5 * A / b[..., None, None]
+        logM, b, _ = _bacg_logbound(A)
+        Omega = 2 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
         return rejection_sampling(
