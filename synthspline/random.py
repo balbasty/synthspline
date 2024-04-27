@@ -145,20 +145,30 @@ class Sampler(RandomVar):
         return {type(self).__name__: self.param.serialize(keep_tensors)}
 
     @classmethod
-    def unserialize(cls, json):
+    def unserialize(cls, obj):
         """
         Unserialize a Sampler.
 
-        Assumes that `json` contains the sampler name as key and its
-        arguments as value.
+        If `cls` is `Sampler`, assumes that `obj` contains the sampler
+        name as key and its arguments as value.
+
+        If `cls` is a `Sampler` subclass, assumes that obj contains
+        its arguments.
         """
-        if not isinstance(json, dict) or len(json) != 1:
-            raise ValueError('Cannot interpret this object as a Sampler')
-        (sampler, args), = json.items()
-        if '.' not in sampler:
-            sampler = 'vesselsynth.random.' + sampler
-        sampler = import_fullname(sampler)
-        return sampler.unserialize(args)
+        if cls is Sampler:
+            if not isinstance(obj, dict) or len(obj) != 1:
+                raise ValueError('Cannot interpret this object as a Sampler')
+            (sampler, args), = obj.items()
+            if '.' not in sampler:
+                sampler = 'vesselsynth.random.' + sampler
+            sampler = import_fullname(sampler)
+            return sampler.unserialize(args)
+        elif isinstance(obj, dict):
+            return cls(**obj)
+        elif isinstance(obj, (list, tuple)):
+            return cls(*obj)
+        else:
+            return cls(obj)
 
     class Parameters:
         """
@@ -774,15 +784,6 @@ class Dirac(Sampler):
         ```
     """
 
-    @classmethod
-    def unserialize(cls, obj):
-        if isinstance(obj, dict):
-            return cls(**obj)
-        elif isinstance(obj, (list, tuple)):
-            return cls(*obj)
-        else:
-            return cls(obj)
-
     class Parameters(Sampler.Parameters):
 
         @property
@@ -929,6 +930,12 @@ class Uniform(Sampler):
             a, b = to_tensor(a, b, dtype=float)
         self.param = self.Parameters(self, a=a, b=b)
 
+    def kernel(self, x):
+        return (self.param.a < x & x <= self.param.b).to(x)
+
+    def pdf(self, x):
+        return self.kernel(x) / (self.b - self.a)
+
     def __call__(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         a = to_tensor(self.param.a, **backend)
@@ -958,15 +965,6 @@ class RandInt(Sampler):
         RandInt(*, scale=VALUE)     # Alias for std
         ```
     """
-
-    @classmethod
-    def unserialize(cls, obj):
-        if isinstance(obj, dict):
-            return cls(**obj)
-        elif isinstance(obj, (list, tuple)):
-            return cls(*obj)
-        else:
-            return cls(obj)
 
     class Parameters(Sampler.Parameters):
 
@@ -1083,15 +1081,6 @@ class Normal(Sampler):
         ```
     """
 
-    @classmethod
-    def unserialize(cls, obj):
-        if isinstance(obj, dict):
-            return cls(**obj)
-        elif isinstance(obj, (list, tuple)):
-            return cls(*obj)
-        else:
-            return cls(obj)
-
     class Parameters(Sampler.Parameters):
 
         @property
@@ -1122,8 +1111,8 @@ class Normal(Sampler):
 
     def __init__(self, *args, **kwargs):
         keys = list(kwargs.keys())
-        keys_loc = ('mean', 'loc')
-        keys_scl = ('fwhm', 'std', 'var', 'scale')
+        keys_loc = ('mu', 'mean', 'loc')
+        keys_scl = ('sigma', 'fwhm', 'std', 'var', 'scale')
         nb_loc = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_loc))
         nb_scl = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_scl))
         if any(key not in keys_loc + keys_scl for key in kwargs):
@@ -1177,15 +1166,6 @@ class LogNormal(Sampler):
         ```
     """
 
-    @classmethod
-    def unserialize(cls, obj):
-        if isinstance(obj, dict):
-            return cls(**obj)
-        elif isinstance(obj, (list, tuple)):
-            return cls(*obj)
-        else:
-            return cls(obj)
-
     class Parameters(Sampler.Parameters):
 
         @property
@@ -1218,8 +1198,8 @@ class LogNormal(Sampler):
 
     def __init__(self, *args, **kwargs):
         keys = list(kwargs.keys())
-        keys_loc = ('mean', 'loc', 'logmean')
-        keys_scl = ('fwhm', 'std', 'var', 'scale', 'logstd', 'logvar')
+        keys_loc = ('mu', 'mean', 'loc', 'logmean')
+        keys_scl = ('sigma', 'fwhm', 'std', 'var', 'scale', 'logstd', 'logvar')
         nb_loc = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_loc))
         nb_scl = (len(args) > 0) + sum(map(lambda x: keys.count(x), keys_scl))
         if any(key not in keys_loc + keys_scl for key in kwargs):
@@ -1264,3 +1244,800 @@ class LogNormal(Sampler):
         mu = to_tensor(self.param.mu, **backend)
         sigma = to_tensor(self.param.sigma, **backend)
         return distributions.LogNormal(mu, sigma).sample(batch)
+
+
+class UniformSphere(Sampler):
+    """
+    Uniform distribution on the (d-1)-sphere
+    """
+    def __init__(self, ndim=3, **backend):
+        """
+        Parameters
+        ----------
+        ndim : int
+            Number of dimensions of the embedding space.
+            If `ndim=3`, generate sample that lie on the 2-sphere.
+        """
+        super().__init__()
+        backend.setdefault('dtype', torch.get_default_dtype())
+        backend.setdefault('device', 'cpu')
+        self.param = self.Parameters(ndim=ndim, **backend)
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self):
+            return torch.Size([self.ndim])
+
+    def __call__(self, batch=tuple(), **backend):
+        backend.setdefault('dtype', self.param.dtype)
+        backend.setdefault('device', self.param.device)
+        x = torch.randn(tuple(batch) + (self.param.ndim,), **backend)
+        mask = x.norm(2, dim=1) < 1e-3
+        while mask.any():
+            x = torch.where(
+                mask,
+                torch.randn(tuple(batch) + (self.param.ndim,), **backend),
+                x,
+            )
+            mask = x.norm(2, dim=1) < 1e-3
+        x /= x.norm(2, dim=1, keepdim=True)
+        return x
+
+
+class AngularCentralGaussian(Sampler):
+    """
+    Angular Central Gaussian (ACG) distribution.
+
+    !!! note "Parameters"
+            - `A`: `(*, 3, 3)` precision
+
+    !!! example "Signatures"
+        ```python
+        AngularCentralGaussian()       # default (A=I)
+        AngularCentralGaussian(A)      # positional variant
+        AngularCentralGaussian(A=0)    # keyword variant
+        # aliases
+        AngularCentralGaussian(*, lam=VALUE)        # alias for A
+        AngularCentralGaussian(*, sigma=VALUE)      # alias for inv(A)
+        AngularCentralGaussian(*, U=VALUE)          # upper-triangular matrix
+        AngularCentralGaussian(*, triu=VALUE)       # alias for U
+        AngularCentralGaussian(*, L=VALUE)          # lower-triangular matrix
+        AngularCentralGaussian(*, tril=VALUE)       # alias for L
+        AngularCentralGaussian(*, R=VALUE, Z=1)     # SVD decomposition of A
+        AngularCentralGaussian(*, rot=VALUE)        # alias for R
+        AngularCentralGaussian(*, axes=VALUE)       # alias for R
+        ```
+        Note that the rows of `R` are the principle axes, not its columns,
+        i.e., `R = [axis1, axis2, axis3]`.
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return self.A.shape[:-1]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        keys = list(kwargs.keys())
+        keys_scl = (
+            'A', 'lam', 'sigma', 'U', 'triu', 'L', 'tril', 'R', 'rot', 'axes'
+        )
+        nb_scl = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_scl for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if nb_scl > 1:
+            raise ValueError('Incompatible arguments')
+        if len(args) > 1:
+            raise ValueError('Too many arguments')
+
+        # log-parameters
+        A = None
+        R, Z = ((1, 0, 0), (0, 1, 0), (0, 0, 1)), (1, 1, 1)
+        if len(args) == 1:
+            A = args[0]
+        A = _get_aliases(kwargs, ['A', 'lam', 'prec'], A)
+        R = _get_aliases(kwargs, ['R', 'rot', 'axes'], R)
+        Z = _get_aliases(kwargs, ['Z'], Z)
+        if 'sigma' in kwargs:
+            A = torch.linalg.inv(kwargs['sigma'])
+
+        R = torch.as_tensor(R)
+        Z = torch.as_tensor(Z)
+        if not Z.shape or Z.shape[-1] == 1:
+            if not Z.shape:
+                Z = Z[None]
+            Z = Z.repeat_interleave(3, -1)
+
+        if A is None:
+            if Z.shape[-1] != 3:
+                raise ValueError('Last dimension of Z must be 3')
+            if R.shape[-2:] != (3, 3):
+                raise ValueError('Last two dimensions of R must be 3')
+            A = (R * Z.unsqueeze(-2)).matmul(R.transpose(-1, -2))
+        elif A.shape[-2:] != (3, 3):
+            raise ValueError('Last two dimensions of A must be 3')
+        else:
+            A = (A + A.transpose(-1, -2)) / 2
+
+        self.param = self.Parameters(self, A=A)
+        self._mcmc_state = None
+
+    def logkernel(self, x):
+        """
+        Return the unnormalized log-PDF
+        """
+        ndim = x.shape[-1]
+        # ensure data lie on the sphere
+        x = x / x.norm(2, dim=-1, keepdim=True)
+        # compute main term
+        logp = self.param.A.matmul(x.unsqueeze(-1))
+        logp = x.unsqueeze(-2).matmul(logp).squeeze(-1).squeeze(-1)
+        logp = -0.5 * ndim * logp.log()
+        return logp
+
+    def kernel(self, x):
+        """
+        Return the unnormalized PDF
+        """
+        return self.logkernel(x).exp()
+
+    def __call__(self, batch=tuple(), **backend):
+        """
+        !!! warning
+            We are using a Metropolis-Hastings samplers and samples
+            (within call, or across successive calls) are correlated.
+        """
+        batch = make_tuple(batch)
+        A = to_tensor(self.param.A, **backend)
+        sample = torch.distributions.MultivariateNormal(
+            loc=torch.zeros_like(A[..., 0]),
+            precision_matrix=A,
+        ).sample(batch)
+        sample = sample / sample.norm(2, dim=-1, keepdim=True)
+        return sample
+
+
+class FisherBingham(Sampler):
+    r"""
+    Fisher-Bingham distribution.
+
+    !!! "PDF"
+        p(x) = Z(A) exp(kappa * x'\mu - x'Ax)
+
+        We follow the convention from Kent et al (2013).
+        In Mardia's book, the convention is
+        p(x) = Z(kappa, mu, A) exp(kappa * x'\mu + x'Ax)
+        (note the missing negative sign).
+
+    !!! note "Parameters"
+        - `mu`:     `(*, 3)`    principal axis with unit norm
+        - `kappa`:  `(*)`       concentration
+        - `A`:      `(*, 3, 3)` precision with null trace
+
+    !!! example "Signatures"
+        ```python
+        FisherBingham(mu=[1, 0, 0], kappa=1, A=0)
+        ```
+
+    !!! tip "Special cases"
+        ```python
+        FisherBingham(mu, kappa, 0) === VonMisesFisher(mu, kappa)
+        FisherBingham(_, 0, A)      === Bingham(A)
+        lam @ mu == 0               === Kent(mu, kappa, A)
+        ```
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(
+                self.mu.shape, self.kappa[..., None].shape, self.A.shape[:-1])
+
+        def mean(self, *args, **kwargs):
+            return self.mu
+
+        loc = mean
+
+    def __init__(self, mu=(1, 0, 0), kappa=1, lam=0):
+        super().__init__()
+
+        mu, kappa, lam = to_tensor(mu, kappa, lam, dtype=float)
+        if not mu.shape or mu.shape[-1] == 1:
+            if not mu.shape:
+                mu = mu[None]
+            mu = mu.repeat_interleave(3, -1)
+        if not lam.shape or lam.shape[-1] == 1:
+            while lam.ndim < 2:
+                lam = lam[None]
+            if lam.shape[-1] == 1:
+                lam = lam.repeat_interleave(3, -1)
+            if lam.shape[-2] == 1:
+                lam = lam.repeat_interleave(3, -2)
+        if mu.shape[-1] != 3:
+            raise ValueError('Last dimension of mu must be 3')
+        if lam.shape[-2:] != (3, 3):
+            raise ValueError('Last two dimensions of lam must be 3')
+        mu = mu / mu.norm(2, dim=-1, keepdim=True)
+        self.param = self.Parameters(self, mu=mu, kappa=kappa, lam=lam)
+        self._mcmc_state = None
+
+    def logkernel(self, x):
+        """
+        Return the unnormalized log-PDF
+        """
+        # ensure data lie on the sphere
+        x = x / x.norm(2, dim=-1, keepdim=True)
+        # compute main term
+        A = self.param.A
+        mu = self.param.mu.unsqueeze(-1)
+        kappa = self.param.kappa.unsqueeze(-1).unsqueeze(-1)
+        logp = A.matmul(x.unsqueeze(-1))
+        logp = x.unsqueeze(-2).matmul(logp)
+        logp = x.unsqueeze(-2).matmul(mu) * kappa - logp
+        logp = logp.squeeze(-1).squeeze(-1)
+        return logp
+
+    def kernel(self, x):
+        """
+        Return the unnormalized PDF
+        """
+        return self.logkernel(x).exp()
+
+    def __call__(self, batch=tuple(), **backend):
+        # Rejection method with a Bingham envelope
+        # https://arxiv.org/pdf/1310.8110
+        batch = make_tuple(batch)
+        kappa = to_tensor(self.param.kappa, **backend)
+        mu = to_tensor(self.param.mu, **backend)
+        A = to_tensor(self.param.A, **backend)
+
+        # Bingham envelope of the FisherBingham distribution
+        A1 = mu[..., :, None] * mu[..., :, None]
+        A1 = A + 0.5 * kappa[..., None, None] * A1
+
+        # ACG envelope of the Bingham envelope
+        logM, b = _bacg_logbound(A1)
+        Omega = 0.5 * A / b[..., None, None]
+        Omega.diagonal(0, -1, -2).add_(1)
+        acg = AngularCentralGaussian(Omega)
+        return rejection_sampling(
+            pdf=self.logkernel,
+            pdf_sampler=acg.logkernel,
+            log=True,
+            sampler=acg,
+            shape=batch,
+            sup=0.5 * kappa + logM,
+        )
+
+
+class Bingham(Sampler):
+    """
+    Bingham distribution.
+
+    !!! "PDF"
+        p(x) = Z(A) exp(-x'Ax)
+
+        We follow the convention from Kent et al (2013).
+        In Mardia's book, the convention is p(x) = Z(A) exp(x'Ax)
+        (note the missing negative sign).
+
+    !!! note "Parameters"
+            - `A`: `(*, 3, 3)` precision matrix
+
+    !!! example "Signatures"
+        ```python
+        Bingham()       # default (A=0)
+        Bingham(A)      # positional variant
+        Bingham(A=0)    # keyword variant
+        # aliases
+        Bingham(*, lam=VALUE)           # alias for A
+        Bingham(*, sigma=VALUE)         # alias for inv(A)
+        Bingham(*, U=VALUE)             # upper-triangular matrix: A = U.T@U
+        Bingham(*, triu=VALUE)          # alias for U
+        Bingham(*, L=VALUE)             # lower-triangular matrix: A = L@L.T
+        Bingham(*, tril=VALUE)          # alias for L
+        Bingham(*, R=VALUE, Z=1)        # SVD decomposition of A: A = R@Z@R.T
+        Bingham(*, rot=VALUE)           # alias for R
+        Bingham(*, axes=VALUE)          # alias for R
+        ```
+        Note that the rows of `R` are the principle axes, not its columns,
+        i.e., `R = [axis1, axis2, axis3]`.
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return self.A.shape[:-1]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        keys = list(kwargs.keys())
+        keys_scl = (
+            'A', 'lam', 'sigma', 'U', 'triu', 'L', 'tril', 'R', 'rot', 'axes'
+        )
+        nb_scl = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_scl))
+        if any(key not in keys_scl for key in kwargs):
+            raise ValueError('Unknown arguments')
+        if nb_scl > 1:
+            raise ValueError('Incompatible arguments')
+        if len(args) > 1:
+            raise ValueError('Too many arguments')
+
+        # log-parameters
+        A = None
+        R, Z = ((1, 0, 0), (0, 1, 0), (0, 0, 1)), (1, 1, 1)
+        if len(args) == 1:
+            A = args[0]
+        A = _get_aliases(kwargs, ['A', 'lam', 'prec'], A)
+        R = _get_aliases(kwargs, ['R', 'rot', 'axes'], R)
+        Z = _get_aliases(kwargs, ['Z'], Z)
+        if 'sigma' in kwargs:
+            A = torch.linalg.inv(kwargs['sigma'])
+
+        R = torch.as_tensor(R)
+        Z = torch.as_tensor(Z)
+        if not Z.shape or Z.shape[-1] == 1:
+            if not Z.shape:
+                Z = Z[None]
+            Z = Z.repeat_interleave(3, -1)
+
+        if A is None:
+            if Z.shape[-1] != 3:
+                raise ValueError('Last dimension of Z must be 3')
+            if R.shape[-2:] != (3, 3):
+                raise ValueError('Last two dimensions of R must be 3')
+            A = (R * Z.unsqueeze(-2)).matmul(R.transpose(-1, -2))
+        elif A.shape[-2:] != (3, 3):
+            raise ValueError('Last two dimensions of A must be 3')
+        else:
+            A = (A + A.transpose(-1, -2)) / 2
+
+        self.param = self.Parameters(self, A=A)
+        self._mcmc_state = None
+
+    def logkernel(self, x):
+        """
+        Return the unnormalized log-PDF
+        """
+        # ensure data lie on the sphere
+        x = x / x.norm(2, dim=-1, keepdim=True)
+        # compute main term
+        logp = self.param.A.matmul(x.unsqueeze(-1))
+        logp = x.unsqueeze(-2).matmul(logp).squeeze(-1).squeeze(-1)
+        return -logp
+
+    def kernel(self, x):
+        """
+        Return the unnormalized PDF
+        """
+        return self.logkernel(x).exp()
+
+    def __call__(self, batch=tuple(), **backend):
+        # Rejection method with a ACG envelope
+        # https://arxiv.org/pdf/1310.8110
+        batch = make_tuple(batch)
+        A = to_tensor(self.param.A, **backend)
+        logM, b = _bacg_logbound(A)
+        Omega = 0.5 * A / b[..., None, None]
+        Omega.diagonal(0, -1, -2).add_(1)
+        acg = AngularCentralGaussian(Omega)
+        return rejection_sampling(
+            pdf=self.logkernel,
+            pdf_sampler=acg.logkernel,
+            log=True,
+            sampler=acg,
+            shape=batch,
+            sup=logM,
+        )
+
+
+def _bacg_logbound(A, tol=1e-6, max_iter=1024):
+    # Compute the rejection bound for for a Bingham rejection
+    # sampler with an Angular Central Gaussian envelope (BACG).
+    #
+    # We wish to find M such as f(x) < M*g(x) \forall x,
+    # where f is Bingham and g is ACG. The acceptance probability is
+    # then f(x) / M*g(x).
+
+    # This bound is found by minimizing eq (3.5) from Kent et al. (2013)
+    # Its log is convex and has a unique minimum.
+    #
+    # However, iterative approximations by Newton's method do not yield
+    # quadratics that upper-bound the functional everywhere, and their
+    # minimization can therfore overshoot the true optimum. Instead,
+    # we use an approximate Hessian that is larger than the true Hessian
+    # everywhere, which leads to more convex quadratics that "seem" to
+    # upper-bound the true functional everywhere. This results in a
+    # maximization-minimization sheme that cannot overshoot. Note
+    # however, that we do not prove that this approximate Hessian
+    # truely results in an upper bound.
+    #
+    # Reference:
+    # Kent, Ganeiber, Marda. "A new method to simulate the Bingham and
+    # related distributions in directional data analysis with applications."
+    # https://arxiv.org/abs/1310.8110
+
+    lam = torch.linalg.eigvalsh(A)
+    q = lam.shape[-1]
+
+    def func(b):
+        b = b.unsqueeze(-1)
+        f = 0.5 * b - 0.5 * q * b.log() - 0.5 * (1 + 2 * lam / b).log().sum(-1)
+        f = f.squeeze(-1)
+        return f
+
+    def grad(b):
+        b = b.unsqueeze(-1)
+        g = (lam/(b*(b + 2*lam))).sum(-1) - q/(2*b) + 0.5
+        g = b.squeeze(-1)
+        return g
+
+    def hess(b):
+        return (0.5*q)/(b*b)
+
+    b = torch.ones_like(lam[..., 0])
+    for _ in range(max_iter):
+        delta = grad(b) / hess(b)
+        b -= delta
+        if delta.abs().max() < tol:
+            break
+
+    return func(b), b
+
+
+class VonMisesFisher(Sampler):
+    """
+    von Mises-Fisher distribution.
+
+    !!! note "Parameters"
+        - `mu`:     `(*, 3)`    principal axis with unit norm
+        - `kappa`:  `(*)`       concentration
+
+    !!! example "Signatures"
+        ```python
+        VonMisesFisher(mu=[1, 0, 0], kappa=1)
+        ```
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(
+                self.mu.shape, self.kappa[..., None].shape)
+
+        def mean(self, *args, **kwargs):
+            return self.mu
+
+        loc = mean
+
+    def __init__(self, mu=(1, 0, 0), kappa=1, lam=0):
+        super().__init__()
+
+        mu, kappa, lam = to_tensor(mu, kappa, lam, dtype=float)
+        if not mu.shape or mu.shape[-1] == 1:
+            if not mu.shape:
+                mu = mu[None]
+            mu = mu.repeat_interleave(3, -1)
+        if not lam.shape or lam.shape[-1] == 1:
+            while lam.ndim < 2:
+                lam = lam[None]
+            if lam.shape[-1] == 1:
+                lam = lam.repeat_interleave(3, -1)
+            if lam.shape[-2] == 1:
+                lam = lam.repeat_interleave(3, -2)
+        if mu.shape[-1] != 3:
+            raise ValueError('Last dimension of mu must be 3')
+        if lam.shape[-2:] != (3, 3):
+            raise ValueError('Last two dimensions of lam must be 3')
+        mu = mu / mu.norm(2, dim=-1, keepdim=True)
+        self.param = self.Parameters(self, mu=mu, kappa=kappa, lam=lam)
+        self._mcmc_state = None
+
+    def logkernel(self, x):
+        """
+        Return the unnormalized log-PDF
+        """
+        # ensure data lie on the sphere
+        x = x / x.norm(2, dim=-1, keepdim=True)
+        # compute main term
+        mu = self.param.mu.unsqueeze(-1)
+        kappa = self.param.kappa.unsqueeze(-1).unsqueeze(-1)
+        logp = x.unsqueeze(-2).matmul(mu) * kappa
+        logp = logp.squeeze(-1).squeeze(-1)
+        return logp
+
+    def kernel(self, x):
+        """
+        Return the unnormalized PDF
+        """
+        return self.logkernel(x).exp()
+
+    def __call__(self, batch=tuple(), **backend):
+        # Rejection method with a Bingham envelope
+        # https://arxiv.org/pdf/1310.8110
+        batch = make_tuple(batch)
+        kappa = to_tensor(self.param.kappa, **backend)
+        mu = to_tensor(self.param.mu, **backend)
+
+        # Bingham envelope of the VonMisesFisher distribution
+        A = mu[..., :, None] * mu[..., :, None]
+        A.neg_()
+        A.diagonal(0, -1, -2).add_(1)
+
+        # ACG envelope of the Bingham envelope
+        logM, b = _bacg_logbound(A)
+        Omega = 0.5 * A / b[..., None, None]
+        Omega.diagonal(0, -1, -2).add_(1)
+        acg = AngularCentralGaussian(Omega)
+        return rejection_sampling(
+            pdf=self.logkernel,
+            pdf_sampler=acg.logkernel,
+            log=True,
+            sampler=acg,
+            shape=batch,
+            sup=0.5 * kappa + logM,
+        )
+
+
+def icdf(p, cdf, mn, mx, tol=1e-6, steps=8):
+    """
+    Compute the inverse of a cumulative distribution functions (CDF) via
+    a binary tree search.
+
+    Parameters
+    ----------
+    p : (*batch) tensor
+        Input cummulant
+    cdf : callable[tensor] -> tensor
+        A function that evaluates the CDF
+    mn : float or (*batch) tensor
+        The lower bound of the value range to search
+    mx : float or (*batch) tensor
+        The upper bound of the value range to search
+    tol : float
+        Target precision, computed over the cumulant
+    steps : int
+        Number of values at which to evaluate the CDF, per iteration
+
+    Returns
+    -------
+    x : (*batch) tensor
+        Output value, such that `cdf(x) == p`.
+    """
+    mn = torch.as_tensor(mn, dtype=p.dtype, device=p.device)
+    mx = torch.as_tensor(mx, dtype=p.dtype, device=p.device)
+    p, mn, mx = torch.broadcast_tensors(p, mn, mx)
+
+    x = torch.linspace(0, 1, steps, dtype=p.dtype, device=p.device)
+    x = x * (mx - mn)[..., None] + mn[..., None]
+    q = cdf(x.movedim(-1, 0)).movedim(0, -1)
+    i = torch.searchsorted(q, p.unsqueeze(-1), side='right')
+    batch_shape = torch.broadcast_shapes(
+        i.shape[:-1], x.shape[:-1], q.shape[:-1])
+    q = q.expand([*batch_shape, q.shape[-1]])
+    x = x.expand([*batch_shape, x.shape[-1]])
+    oob = (i == steps).squeeze(-1)
+    pmn = q.take_along_dim(i-1, -1).squeeze(-1)
+    mn = x.take_along_dim(i-1, -1).squeeze(-1)
+    i.clamp_max_(steps-1)
+    pmx = q.take_along_dim(i, -1).squeeze(-1)
+    mx = x.take_along_dim(i, -1).squeeze(-1)
+    if not oob.any() and (((pmn+pmx)/2 - p).abs() < tol).all():
+        return (mn + mx) / 2
+    # golden section search on the right if solution not in current bounds
+    gold = (1 + 5**0.5) / 2
+    mx[oob] = x[oob, -1] + (x[oob, -1] - x[oob, -2]) * gold
+    # TODO: golden section search on the left as well
+    return icdf(p, cdf, mn, mx, tol=tol, steps=steps)
+
+
+def gauss_moment(n, D):
+    """
+    Compute the n-th generalized moment of the standard Gaussian
+
+        E_{x ~ N(0, I)}[(x'Dx)^n]
+
+    !!! quote "Reference"
+        1.  Raymond Kan. “From moments of sum to moments of product”.
+            In: Journal of Multivariate Analysis 99.3 (2008), pp. 542-554.
+        2.  Rong Ge, et al. "Efficient sampling from the Bingham distribution".
+            (Corollary A.2) https://arxiv.org/pdf/2010.00137.pdf
+
+    Parameters
+    ----------
+    n : int
+        Moment
+    D : int or (*, k, k) tensor
+        - If an integer, it is the dimension of the distribution, and
+          E_{x ~ N(0, I)}[(x'x)^n] is returned (closed-form solution)
+        - If a tensor, it should be a symmetric matrix, and
+          E_{x ~ N(0, I)}[(x'Dx)^n] is returned.
+
+    Returns
+    -------
+    m : (*) tensor
+        Moment: E_{x ~ N(0, I)}[(x'Dx)^n]
+
+    """
+    if isinstance(D, int):
+        return (D + 2*torch.arange(n)).prod().item()
+
+    if n == 0:
+        return D.new_ones(D.shape[:-2])
+
+    acc, S, Di = 0, 1, D
+    for i in range(1, n+1):
+        Di = D if i == 1 else Di.matmul(D)
+        DS = Di.diagonal(0, -1, -2).sum(-1) * S
+        acc += DS
+        S = acc / (2*i)
+    return S
+
+
+def metropolis_hastings(init, pdf, sampler=1e-3,
+                        nburn=0, nthin=1, shape=tuple(), log=False):
+    """
+    Run a Metropolis-Hastings MCMC chain
+
+    Parameters
+    ----------
+    init : (*batch, *itemshape) tensor
+        Initial sample. If `batch`, build multiple chains in parallel.
+    pdf : callable((*batch, *shape) tensor) -> (*batch) tensor
+        Functions that computes the target PDF (up to a scaling factor)
+        or the log-PDF (up to an additive constant).
+    sampler : float or callable(tensor) -> tensor
+        Symmetric sampler.
+        If a float: N(0, sigma^2)
+        If None: N(0, 1)
+    nburn : int
+        Number of burnin steps (i.e., discard the first `nburn` samples)
+    nthin : int
+        Number of thinning steps (i.e., only keep one every `nthin` samples)
+    shape : int or list[int]
+        Number of samples to return.
+        If 0, return a single sample (not in a list).
+    log : bool
+        Whether the function is a PDF or a log-PDF
+
+    Returns
+    -------
+    samples : (*shape, *batch, *itemshape) tensor
+        Computed samples
+    state : (*batch, *itemshape) tensor
+        Return the current state (i.e., last accepted sample) of the chain
+    """
+    if log:
+        def accept(logf, logf0):
+            return torch.rand_like(logf).log() <= (logf - logf0)
+    else:
+        def accept(f, f0):
+            return torch.rand_like(f) <= f/f0
+
+    if not callable(sampler):
+        sigma = sampler or 1
+
+        def sampler(x):
+            return x + torch.randn_like(x) * sigma
+
+    if shape is not None:
+        if not isinstance(shape, (list, tuple)):
+            shape = [shape]
+        shape = torch.Size(shape)
+        nsamples = shape.numel()
+    else:
+        nsamples = 0
+
+    if nsamples:
+        samples = init.new_zeros((nsamples,) + init.shape)
+    else:
+        samples = None
+
+    p = np = n = m = 0
+    f0 = pdf(init)
+    while True:
+        # get a proposal
+        sample = sampler(init)
+        # compute its (log)-pdf
+        f = pdf(sample)
+        # accept/reject
+        mask = accept(f, f0)
+        # update acceptance rate
+        p = (np * p + mask.float().mean()) / (np + 1)
+        np += 1
+        print(f'accept prob: {p:12.6f}', end='\r')
+        # if accept, update chain state and increase total sample count
+        init = torch.where(mask, sample, init)
+        f0 = torch.where(mask, f, f0)
+        n += 1
+        # if accept and burnin finished, and not skipped, save sample
+        if n > nburn:
+            if nsamples and (n-nburn-1) % nthin == 0:
+                samples[m] = init
+                m += 1
+            if m == nsamples:
+                break
+
+    print('')
+    if nsamples:
+        samples = samples.reshape(shape + init.shape)
+    return samples, init
+
+
+def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
+                       log=False, sup=1):
+    """
+    Run a rejection sampling scheme
+
+    Parameters
+    ----------
+    pdf : callable((*batch, *item) tensor) -> (*batch) tensor
+        Functions that computes the target PDF (up to a scaling factor)
+        or the log-PDF (up to an additive constant).
+    pdf_sampler : callable((*batch, *item) tensor) -> (*batch) tensor
+        Function that computes the sampler's PDF (up to a scaling factor)
+        or its log-PDF (up to an additive constant).
+    sampler : float or callable(batch: list[int]) -> (*batch, *item) tensor
+        Sampler.  If a float: N(0, sigma^2). If None: N(0, 1).
+    shape : int or list[int]
+        Number of samples to return.
+        If 0, return a single sample (not in a list).
+    log : bool
+        Whether the function is a PDF or a log-PDF
+    sup : float or (*batch) tensor
+        Upper bound of `pdf(x)/pdf_sampler(x)`.
+        If `log`, must be the log of the bound.
+
+    Returns
+    -------
+    samples : (*batch, *item) tensor
+        Computed samples
+    """
+    if log:
+        def accept(logf, logf0):
+            return torch.rand_like(logf).log() <= (logf - logf0 - sup)
+    else:
+        def accept(f, f0):
+            return torch.rand_like(f) <= f/(sup*f0)
+
+    if not callable(sampler):
+        sigma = sampler or 1
+
+        def sampler(x):
+            return x + torch.randn_like(x) * sigma
+
+        def pdf_sampler(x):
+            return (x*x) / (-2 * (sigma*sigma))
+
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
+    shape = torch.Size(shape)
+    nsamples = shape.numel()
+
+    sample = sampler([nsamples])
+    mask = accept(pdf(sample), pdf_sampler(sample))
+    p, np = mask.float().mean(), nsamples
+
+    while True:
+        nsamples = (~mask).sum().item()
+        new_sample = sampler([nsamples])
+        new_mask = accept(pdf(new_sample), pdf_sampler(new_sample))
+        sample[~mask] = new_sample
+        mask[~mask] = new_mask
+        # update acceptance rate
+        p = (np * p + nsamples * new_mask.float().mean()) / (np + nsamples)
+        np += nsamples
+        print(f'accept prob: {p:12.6f}', end='\r')
+        if mask.all():
+            break
+
+    print('')
+    sample = sample.reshape(shape + sample.shape[1:])
+    return sample
