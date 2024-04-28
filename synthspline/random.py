@@ -2100,19 +2100,27 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
 
     sample = sampler([nsamples])
     mask = accept(pdf(sample), pdf_sampler(sample))
+    nbatchinner = mask.ndim - 1
     p, np = mask.float().mean(), nsamples
     print(f'accept prob: {p:12.6f}', end='\r')
 
-    while ~mask.all():
-        nsamples = (~mask).sum().item()
-        new_sample = sampler([nsamples])
-        new_mask = accept(pdf(new_sample), pdf_sampler(new_sample))
-        sample[~mask] = new_sample
-        mask[~mask] = new_mask
-        # update acceptance rate
-        p = (np * p + nsamples * new_mask.float().mean()) / (np + nsamples)
-        np += nsamples
-        print(f'accept prob: {p:12.6f}', end='\r')
+    if nbatchinner == 0:
+        while ~mask.all():
+            nsamples = (~mask).sum().item()
+            new_sample = sampler([nsamples])
+            new_mask = accept(pdf(new_sample), pdf_sampler(new_sample))
+            sample[~mask] = new_sample
+            mask[~mask] = new_mask
+            # update acceptance rate
+            p = (np * p + nsamples * new_mask.float().mean()) / (np + nsamples)
+            np += nsamples
+            print(f'accept prob: {p:12.6f}', end='\r')
+    else:
+        while ~mask.all():
+            new_sample = sampler([nsamples])
+            new_mask = ~mask & accept(pdf(new_sample), pdf_sampler(new_sample))
+            sample[new_mask] = new_sample[new_mask]
+            mask |= new_mask
 
     print('')
     sample = sample.reshape(shape + sample.shape[1:])
