@@ -1362,8 +1362,13 @@ class AngularCentralGaussian(Sampler):
         else:
             A = (A + A.transpose(-1, -2)) / 2
 
+        # all `A + c*I`, whatever the value of `c`, yield the same .
+        # distribution. We therefore subtract the smallest eigenvalue of A.
+        # We also add a little epsilon so that it's pos-def
+        A = A.clone()
+        A.diagonal(0, -1, -2).sub_(torch.linalg.eigvalsh(A)[..., :1] - 1e-3)
+
         self.param = self.Parameters(self, A=A)
-        self._mcmc_state = None
 
     def logkernel(self, x):
         """
@@ -1405,17 +1410,12 @@ class FisherBingham(Sampler):
     Fisher-Bingham distribution.
 
     !!! "PDF"
-        p(x) = Z(A) exp(kappa * x'\mu - x'Ax)
-
-        We follow the convention from Kent et al (2013).
-        In Mardia's book, the convention is
-        p(x) = Z(kappa, mu, A) exp(kappa * x'\mu + x'Ax)
-        (note the missing negative sign).
+        p(x) = Z(A) exp(\kappa * x'\mu + x'Ax)
 
     !!! note "Parameters"
         - `mu`:     `(*, 3)`    principal axis with unit norm
         - `kappa`:  `(*)`       concentration
-        - `A`:      `(*, 3, 3)` precision with null trace
+        - `A`:      `(*, 3, 3)` precision
 
     !!! example "Signatures"
         ```python
@@ -1426,7 +1426,7 @@ class FisherBingham(Sampler):
         ```python
         FisherBingham(mu, kappa, 0) === VonMisesFisher(mu, kappa)
         FisherBingham(_, 0, A)      === Bingham(A)
-        lam @ mu == 0               === Kent(mu, kappa, A)
+        A @ mu == 0                 === Kent(mu, kappa, A)
         ```
     """
 
@@ -1442,28 +1442,36 @@ class FisherBingham(Sampler):
 
         loc = mean
 
-    def __init__(self, mu=(1, 0, 0), kappa=1, lam=0):
+    def __init__(self, mu=(1, 0, 0), kappa=1, A=0):
         super().__init__()
 
-        mu, kappa, lam = to_tensor(mu, kappa, lam, dtype=float)
+        mu, kappa, A = to_tensor(mu, kappa, A, dtype=float)
         if not mu.shape or mu.shape[-1] == 1:
             if not mu.shape:
                 mu = mu[None]
             mu = mu.repeat_interleave(3, -1)
-        if not lam.shape or lam.shape[-1] == 1:
-            while lam.ndim < 2:
-                lam = lam[None]
-            if lam.shape[-1] == 1:
-                lam = lam.repeat_interleave(3, -1)
-            if lam.shape[-2] == 1:
-                lam = lam.repeat_interleave(3, -2)
+        if not A.shape or A.shape[-1] == 1:
+            while A.ndim < 2:
+                A = A[None]
+            if A.shape[-1] == 1:
+                A = A.repeat_interleave(3, -1)
+            if A.shape[-2] == 1:
+                A = A.repeat_interleave(3, -2)
         if mu.shape[-1] != 3:
             raise ValueError('Last dimension of mu must be 3')
-        if lam.shape[-2:] != (3, 3):
+        if A.shape[-2:] != (3, 3):
             raise ValueError('Last two dimensions of lam must be 3')
+
+        # Ensure mean is unit norm
         mu = mu / mu.norm(2, dim=-1, keepdim=True)
-        self.param = self.Parameters(self, mu=mu, kappa=kappa, lam=lam)
-        self._mcmc_state = None
+
+        # all `A + c*I`, whatever the value of `c`, yield the same .
+        # distribution. We therefore subtract the smallest eigenvalue of -A.
+        A = A.neg()
+        A.diagonal(0, -1, -2).sub_(torch.linalg.eigvalsh(A)[..., :1])
+        A.neg_()
+
+        self.param = self.Parameters(self, mu=mu, kappa=kappa, A=A)
 
     def logkernel(self, x):
         """
@@ -1477,7 +1485,7 @@ class FisherBingham(Sampler):
         kappa = self.param.kappa.unsqueeze(-1).unsqueeze(-1)
         logp = A.matmul(x.unsqueeze(-1))
         logp = x.unsqueeze(-2).matmul(logp)
-        logp = x.unsqueeze(-2).matmul(mu) * kappa - logp
+        logp += x.unsqueeze(-2).matmul(mu) * kappa
         logp = logp.squeeze(-1).squeeze(-1)
         return logp
 
@@ -1493,14 +1501,14 @@ class FisherBingham(Sampler):
         batch = make_tuple(batch)
         kappa = to_tensor(self.param.kappa, **backend)
         mu = to_tensor(self.param.mu, **backend)
-        A = to_tensor(self.param.A, **backend)
+        A = to_tensor(self.param.A, **backend).neg()
 
         # Bingham envelope of the FisherBingham distribution
         A1 = mu[..., :, None] * mu[..., :, None]
         A1 = A + 0.5 * kappa[..., None, None] * A1
 
         # ACG envelope of the Bingham envelope
-        logM, b, _ = _bacg_logbound(A1)
+        logM, b = _bacg_logbound(A1)
         Omega = 0.5 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
@@ -1519,11 +1527,7 @@ class Bingham(Sampler):
     Bingham distribution.
 
     !!! "PDF"
-        p(x) = Z(A) exp(-x'Ax)
-
-        We follow the convention from Kent et al (2013).
-        In Mardia's book, the convention is p(x) = Z(A) exp(x'Ax)
-        (note the missing negative sign).
+        p(x) = Z(A) exp(x'Ax)
 
     !!! note "Parameters"
             - `A`: `(*, 3, 3)` precision matrix
@@ -1598,8 +1602,13 @@ class Bingham(Sampler):
         else:
             A = (A + A.transpose(-1, -2)) / 2
 
+        # all `A + c*I`, whatever the value of `c`, yield the same .
+        # distribution. We therefore subtract the smallest eigenvalue of A.
+        A = A.neg()
+        A.diagonal(0, -1, -2).sub_(torch.linalg.eigvalsh(A)[..., :1])
+        A.neg_()
+
         self.param = self.Parameters(self, A=A)
-        self._mcmc_state = None
 
     def logkernel(self, x):
         """
@@ -1610,7 +1619,7 @@ class Bingham(Sampler):
         # compute main term
         logp = self.param.A.matmul(x.unsqueeze(-1))
         logp = x.unsqueeze(-2).matmul(logp).squeeze(-1).squeeze(-1)
-        return -logp
+        return logp
 
     def kernel(self, x):
         """
@@ -1622,8 +1631,8 @@ class Bingham(Sampler):
         # Rejection method with a ACG envelope
         # https://arxiv.org/pdf/1310.8110
         batch = make_tuple(batch)
-        A = to_tensor(self.param.A, **backend)
-        logM, b, _ = _bacg_logbound(A)
+        A = to_tensor(self.param.A, **backend).neg()
+        logM, b = _bacg_logbound(A)
         Omega = 2 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
@@ -1648,52 +1657,130 @@ def _bacg_logbound(A, tol=1e-6, max_iter=1024):
     # This bound is found by minimizing eq (3.5) from Kent et al. (2013)
     # Its log is convex and has a unique minimum.
     #
-    # However, iterative approximations by Newton's method do not yield
-    # quadratics that upper-bound the functional everywhere, and their
-    # minimization can therfore overshoot the true optimum. Instead,
-    # we use an approximate Hessian that is larger than the true Hessian
-    # everywhere, which leads to more convex quadratics that "seem" to
-    # upper-bound the true functional everywhere. This results in a
-    # maximization-minimization sheme that cannot overshoot. Note
-    # however, that we do not prove that this approximate Hessian
-    # truely results in an upper bound.
-    #
     # Reference:
     # Kent, Ganeiber, Marda. "A new method to simulate the Bingham and
     # related distributions in directional data analysis with applications."
     # https://arxiv.org/abs/1310.8110
+    # https://eprints.whiterose.ac.uk/123206/7/simbingham8.pdf
 
     lam = torch.linalg.eigvalsh(A)
     q = lam.shape[-1]
 
     def func(b):
         b = b.unsqueeze(-1)
-        f = 0.5 * b - 0.5 * q * b.log() - 0.5 * (1 + 2 * lam / b).log().sum(-1)
+        f = 0.5 * b - 0.5 * (b + 2 * lam).log().sum(-1, keepdim=True)
         f = f.squeeze(-1)
         return f
 
     def grad(b):
         b = b.unsqueeze(-1)
-        g = (lam/(b*(b + 2*lam))).sum(-1) - q/(2*b) + 0.5
-        g = b.squeeze(-1)
+        g = 0.5 - 0.5 * (b + 2 * lam).reciprocal().sum(-1, keepdim=True)
+        g = g.squeeze(-1)
         return g
 
     def hess(b):
-        return (0.5*q)/(b*b)
+        # # This is the true Hessian
+        # b = b.unsqueeze(-1)
+        # h = 0.5 * (b + 2 * lam).square().reciprocal().sum(-1, keepdim=True)
+        # h = h.squeeze(-1)
+        # # But we instead use a fixed upper bound that ensures we never
+        # # overshoot
+        h = 0.5 * q
+        return h
 
     b = torch.ones_like(lam[..., 0])
+    f = func(b)
     for _ in range(max_iter):
-        delta = grad(b) / hess(b)
-        b -= delta
-        if delta.abs().max() < tol:
+        g, h = grad(b), hess(b)
+        delta = g / h
+        f0, armijo = f, 1
+        b.sub_(delta, alpha=armijo)
+        for _ in range(12):
+            f = func(b)
+            mask = f < f0
+            if mask.all():
+                break
+            armijo /= 2
+            b.add_(delta * (~mask), alpha=armijo)
+        if not mask.all():
+            b.add_(delta * (~mask), alpha=armijo)
+        if (f-f0).abs().max() < tol:
             break
 
-    return func(b), b, lam
+    f = func(b)
+    f += 0.5 * q * (math.log(q) - 1)
+    return f, b
+
+
+class Watson(Sampler):
+    r"""
+    Watson distribution.
+
+    !!! "PDF"
+        p(x) = Z(A) exp(\kappa * (x'\mu)^2)
+
+    !!! note "Parameters"
+        - `mu`:     `(*, 3)`    principal axis with unit norm
+        - `kappa`:  `(*)`       concentration
+
+    !!! example "Signatures"
+        ```python
+        Watson(mu=[1, 0, 0], kappa=1)
+        ```
+    """
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self) -> torch.Size:
+            return torch.broadcast_shapes(
+                self.mu.shape, self.kappa[..., None].shape)
+
+    def __init__(self, mu=(1, 0, 0), kappa=1):
+        super().__init__()
+
+        mu, kappa = to_tensor(mu, kappa, dtype=float)
+        if not mu.shape or mu.shape[-1] == 1:
+            if not mu.shape:
+                mu = mu[None]
+            mu = mu.repeat_interleave(3, -1)
+        if mu.shape[-1] != 3:
+            raise ValueError('Last dimension of mu must be 3')
+        mu = mu / mu.norm(2, dim=-1, keepdim=True)
+        self.param = self.Parameters(self, mu=mu, kappa=kappa)
+
+    def logkernel(self, x):
+        """
+        Return the unnormalized log-PDF
+        """
+        # ensure data lie on the sphere
+        x = x / x.norm(2, dim=-1, keepdim=True)
+        # compute main term
+        mu = self.param.mu.unsqueeze(-1)
+        logp = x.unsqueeze(-2).matmul(mu).squeeze(-1).squeeze(-1)
+        logp = logp.square().mul(self.param.kappa)
+        return logp
+
+    def kernel(self, x):
+        """
+        Return the unnormalized PDF
+        """
+        return self.logkernel(x).exp()
+
+    def __call__(self, batch=tuple(), **backend):
+        mu = to_tensor(self.param.mu, **backend)
+        kappa = to_tensor(self.param.kappa, **backend)
+        A = mu[..., None, :] * mu[..., :, None]
+        A = A * kappa[..., None, None]
+        return Bingham(A)(batch)
 
 
 class VonMisesFisher(Sampler):
-    """
+    r"""
     von Mises-Fisher distribution.
+
+    !!! "PDF"
+        p(x) = Z(A) exp(\kappa * x'\mu)
 
     !!! note "Parameters"
         - `mu`:     `(*, 3)`    principal axis with unit norm
@@ -1717,28 +1804,18 @@ class VonMisesFisher(Sampler):
 
         loc = mean
 
-    def __init__(self, mu=(1, 0, 0), kappa=1, lam=0):
+    def __init__(self, mu=(1, 0, 0), kappa=1):
         super().__init__()
 
-        mu, kappa, lam = to_tensor(mu, kappa, lam, dtype=float)
+        mu, kappa = to_tensor(mu, kappa, dtype=float)
         if not mu.shape or mu.shape[-1] == 1:
             if not mu.shape:
                 mu = mu[None]
             mu = mu.repeat_interleave(3, -1)
-        if not lam.shape or lam.shape[-1] == 1:
-            while lam.ndim < 2:
-                lam = lam[None]
-            if lam.shape[-1] == 1:
-                lam = lam.repeat_interleave(3, -1)
-            if lam.shape[-2] == 1:
-                lam = lam.repeat_interleave(3, -2)
         if mu.shape[-1] != 3:
             raise ValueError('Last dimension of mu must be 3')
-        if lam.shape[-2:] != (3, 3):
-            raise ValueError('Last two dimensions of lam must be 3')
         mu = mu / mu.norm(2, dim=-1, keepdim=True)
-        self.param = self.Parameters(self, mu=mu, kappa=kappa, lam=lam)
-        self._mcmc_state = None
+        self.param = self.Parameters(self, mu=mu, kappa=kappa)
 
     def logkernel(self, x):
         """
@@ -1772,7 +1849,7 @@ class VonMisesFisher(Sampler):
         A.diagonal(0, -1, -2).add_(1)
 
         # ACG envelope of the Bingham envelope
-        logM, b, _ = _bacg_logbound(A)
+        logM, b = _bacg_logbound(A)
         Omega = 2 * A / b[..., None, None]
         Omega.diagonal(0, -1, -2).add_(1)
         acg = AngularCentralGaussian(Omega)
@@ -2024,8 +2101,9 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
     sample = sampler([nsamples])
     mask = accept(pdf(sample), pdf_sampler(sample))
     p, np = mask.float().mean(), nsamples
+    print(f'accept prob: {p:12.6f}', end='\r')
 
-    while True:
+    while ~mask.all():
         nsamples = (~mask).sum().item()
         new_sample = sampler([nsamples])
         new_mask = accept(pdf(new_sample), pdf_sampler(new_sample))
@@ -2035,8 +2113,6 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
         p = (np * p + nsamples * new_mask.float().mean()) / (np + nsamples)
         np += nsamples
         print(f'accept prob: {p:12.6f}', end='\r')
-        if mask.all():
-            break
 
     print('')
     sample = sample.reshape(shape + sample.shape[1:])
