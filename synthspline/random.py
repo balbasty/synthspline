@@ -6,6 +6,12 @@ __all__ = [
     'RandInt',
     'Normal',
     'LogNormal',
+    'UniformSphere',
+    'AngularCentralGaussian',
+    'FisherBingham',
+    'Bingham',
+    'Watson',
+    'VonMisesFisher',
 ]
 import math
 import torch
@@ -365,7 +371,7 @@ class Sampler(RandomVar):
 
     param: Parameters
 
-    def __call__(self, batch=tuple(), **backend) -> Tensor:
+    def sample(self, batch=tuple(), **backend) -> Tensor:
         """
         Sample from the distribution
 
@@ -385,6 +391,9 @@ class Sampler(RandomVar):
             `shape` is the broadcasted shape of the parameter(s).
         """
         return NotImplemented
+
+    def __call__(self, *args, **kwargs) -> Tensor:
+        return self.sample(*args, **kwargs)
 
     def to_str(self):
         args = []
@@ -644,7 +653,7 @@ class Op1(Sampler):
             sampler = Dirac(sampler)
         self.param = self.Parameters(self, sampler=sampler, op=op)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         return self.param.op(self.param.sampler(batch, **backend))
 
 
@@ -702,7 +711,7 @@ class Op2(Sampler):
         self.param = self.Parameters(
             self, sampler1=sampler1, sampler2=sampler2, op=op)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         x = self.param.sampler1(batch, **backend)
         y = self.param.sampler2(batch, **backend)
         x, y = to_tensor(x, y, **backend)
@@ -764,7 +773,7 @@ class OpN(Sampler):
         ])
         self.param = self.Parameters(self, samplers=samplers, op=op)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         x = [f(batch, **backend) for f in self.param.samplers]
         x = to_tensor(*x, **backend)
         return self.param.op(*x)
@@ -814,7 +823,7 @@ class Dirac(Sampler):
         value = to_tensor(value, dtype=get_default_dtype())
         self.param = self.Parameters(self, value=value)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         value = self.param.value.to(**backend)
         return (value.new_empty([batch + self.param.shape]).copy_(value)
@@ -936,7 +945,7 @@ class Uniform(Sampler):
     def pdf(self, x):
         return self.kernel(x) / (self.b - self.a)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         a = to_tensor(self.param.a, **backend)
         b = to_tensor(self.param.b, **backend)
@@ -1045,7 +1054,7 @@ class RandInt(Sampler):
             a, b = to_tensor(a, b, dtype=int)
         self.param = self.Parameters(self, a=a, b=b)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         dtype = backend.pop('dtype', None)
         if not dtype:
@@ -1136,7 +1145,7 @@ class Normal(Sampler):
         mu, sigma = to_tensor(mu, sigma, dtype=float)
         self.param = self.Parameters(self, mu=mu, sigma=sigma)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         mu = to_tensor(self.param.mu, **backend)
         sigma = to_tensor(self.param.sigma, **backend)
@@ -1239,11 +1248,64 @@ class LogNormal(Sampler):
         mu, sigma = to_tensor(mu, sigma, dtype=float)
         self.param = self.Parameters(self, mu=mu, sigma=sigma)
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         batch = make_tuple(batch or [])
         mu = to_tensor(self.param.mu, **backend)
         sigma = to_tensor(self.param.sigma, **backend)
         return distributions.LogNormal(mu, sigma).sample(batch)
+
+
+class Dirichlet(Sampler):
+    """
+    Dirichlet distribution over mixing probabilities
+    """
+    def __init__(self, alpha, **backend):
+        """
+        Parameters
+        ----------
+        alpha : (*, K) tensor
+            Concentration parameters
+        """
+        alpha = to_tensor(alpha, **backend, dtype=float)
+        self.param = self.Parameters(self, alpha=alpha, **backend)
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self):
+            return self.alpha.shape
+
+    def sample(self, batch=tuple(), **backend):
+        alpha = to_tensor(self.param.alpha, **backend)
+        batch = make_tuple(batch or [])
+        return torch.distributions.Dirichlet(alpha).sample(batch)
+
+
+class Categorical(Sampler):
+    """
+    Categorical distribution over discrete classes
+    """
+    def __init__(self, pi, **backend):
+        """
+        Parameters
+        ----------
+        pi : (*, K) tensor
+            Class probabilities
+        """
+        pi = to_tensor(pi, **backend, dtype=float)
+        pi = pi / pi.sum(-1, keepdim=True)
+        self.param = self.Parameters(self, pi=pi, **backend)
+
+    class Parameters(Sampler.Parameters):
+
+        @property
+        def shape(self):
+            return self.pi.shape
+
+    def sample(self, batch=tuple(), **backend):
+        pi = to_tensor(self.param.pi, **backend)
+        batch = make_tuple(batch or [])
+        return torch.distributions.Categorical(pi).sample(batch)
 
 
 class UniformSphere(Sampler):
@@ -1261,7 +1323,7 @@ class UniformSphere(Sampler):
         super().__init__()
         backend.setdefault('dtype', torch.get_default_dtype())
         backend.setdefault('device', 'cpu')
-        self.param = self.Parameters(ndim=ndim, **backend)
+        self.param = self.Parameters(self, ndim=ndim, **backend)
 
     class Parameters(Sampler.Parameters):
 
@@ -1269,10 +1331,11 @@ class UniformSphere(Sampler):
         def shape(self):
             return torch.Size([self.ndim])
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         backend.setdefault('dtype', self.param.dtype)
         backend.setdefault('device', self.param.device)
-        x = torch.randn(tuple(batch) + (self.param.ndim,), **backend)
+        batch = make_tuple(batch or [])
+        x = torch.randn(batch + (self.param.ndim,), **backend)
         mask = x.norm(2, dim=1) < 1e-3
         while mask.any():
             x = torch.where(
@@ -1389,7 +1452,7 @@ class AngularCentralGaussian(Sampler):
         """
         return self.logkernel(x).exp()
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         """
         !!! warning
             We are using a Metropolis-Hastings samplers and samples
@@ -1495,7 +1558,7 @@ class FisherBingham(Sampler):
         """
         return self.logkernel(x).exp()
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         # Rejection method with a Bingham envelope
         # https://arxiv.org/pdf/1310.8110
         batch = make_tuple(batch)
@@ -1563,10 +1626,10 @@ class Bingham(Sampler):
 
         keys = list(kwargs.keys())
         keys_scl = (
-            'A', 'lam', 'sigma', 'U', 'triu', 'L', 'tril', 'R', 'rot', 'axes'
+            'A', 'lam', 'sigma', 'U', 'triu', 'L', 'tril', 'R', 'rot', 'axes',
         )
         nb_scl = (len(args) > 1) + sum(map(lambda x: keys.count(x), keys_scl))
-        if any(key not in keys_scl for key in kwargs):
+        if any(key not in keys_scl + ('Z',) for key in kwargs):
             raise ValueError('Unknown arguments')
         if nb_scl > 1:
             raise ValueError('Incompatible arguments')
@@ -1627,7 +1690,7 @@ class Bingham(Sampler):
         """
         return self.logkernel(x).exp()
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         # Rejection method with a ACG envelope
         # https://arxiv.org/pdf/1310.8110
         batch = make_tuple(batch)
@@ -1767,7 +1830,7 @@ class Watson(Sampler):
         """
         return self.logkernel(x).exp()
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         mu = to_tensor(self.param.mu, **backend)
         kappa = to_tensor(self.param.kappa, **backend)
         A = mu[..., None, :] * mu[..., :, None]
@@ -1836,7 +1899,7 @@ class VonMisesFisher(Sampler):
         """
         return self.logkernel(x).exp()
 
-    def __call__(self, batch=tuple(), **backend):
+    def sample(self, batch=tuple(), **backend):
         # Rejection method with a Bingham envelope
         # https://arxiv.org/pdf/1310.8110
         batch = make_tuple(batch)
@@ -1959,7 +2022,8 @@ def gauss_moment(n, D):
 
 
 def metropolis_hastings(init, pdf, sampler=1e-3,
-                        nburn=0, nthin=1, shape=tuple(), log=False):
+                        nburn=0, nthin=1, shape=tuple(), log=False,
+                        verbose=False):
     """
     Run a Metropolis-Hastings MCMC chain
 
@@ -2029,7 +2093,8 @@ def metropolis_hastings(init, pdf, sampler=1e-3,
         # update acceptance rate
         p = (np * p + mask.float().mean()) / (np + 1)
         np += 1
-        print(f'accept prob: {p:12.6f}', end='\r')
+        if verbose:
+            print(f'accept prob: {p:12.6f}', end='\r')
         # if accept, update chain state and increase total sample count
         init = torch.where(mask, sample, init)
         f0 = torch.where(mask, f, f0)
@@ -2042,14 +2107,15 @@ def metropolis_hastings(init, pdf, sampler=1e-3,
             if m == nsamples:
                 break
 
-    print('')
+    if verbose:
+        print('')
     if nsamples:
         samples = samples.reshape(shape + init.shape)
     return samples, init
 
 
 def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
-                       log=False, sup=1):
+                       log=False, sup=1, verbose=False):
     """
     Run a rejection sampling scheme
 
@@ -2102,7 +2168,8 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
     mask = accept(pdf(sample), pdf_sampler(sample))
     nbatchinner = mask.ndim - 1
     p, np = mask.float().mean(), nsamples
-    print(f'accept prob: {p:12.6f}', end='\r')
+    if verbose:
+        print(f'accept prob: {p:12.6f}', end='\r')
 
     if nbatchinner == 0:
         while ~mask.all():
@@ -2114,7 +2181,8 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
             # update acceptance rate
             p = (np * p + nsamples * new_mask.float().mean()) / (np + nsamples)
             np += nsamples
-            print(f'accept prob: {p:12.6f}', end='\r')
+            if verbose:
+                print(f'accept prob: {p:12.6f}', end='\r')
     else:
         while ~mask.all():
             new_sample = sampler([nsamples])
@@ -2122,6 +2190,7 @@ def rejection_sampling(pdf, pdf_sampler=None, sampler=1e-3, shape=tuple(),
             sample[new_mask] = new_sample[new_mask]
             mask |= new_mask
 
-    print('')
+    if verbose:
+        print('')
     sample = sample.reshape(shape + sample.shape[1:])
     return sample

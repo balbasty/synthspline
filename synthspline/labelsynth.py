@@ -520,7 +520,11 @@ class SynthSplineBlockV2(nn.Module):
         orient_variance: AnyVar = random.LogNormal(mean=10, std=50)
         """
         Variance of spline orientations about the main axes
-        (Inverse of the Bingham/Watson concentration parameters)
+        (Inverse of the Bingham/Watson concentration parameter).
+        """
+        orient_mixture: AnyVar = random.RandInt(1, 3)
+        """
+        Number of components in the mixture of Watson/Bingham
         """
         device: Union[torch.device, str] = None
         """Device to use during rasterization: "cpu" or "cuda"."""
@@ -566,7 +570,7 @@ class SynthSplineBlockV2(nn.Module):
         # Sample initial endpoint and length
         # We keep trying until we get a segment that's at least 3 voxel long
         segment_length = 0
-        first_side = None
+        project_first_to_side = first is None
         while segment_length < 3:
 
             # If not provided, sample first endpoint
@@ -577,27 +581,22 @@ class SynthSplineBlockV2(nn.Module):
             if first is None:
                 # Sample a 3D coordinate inside the cube
                 first = torch.rand([ndim]) * (torch.as_tensor(shape) - 1)
-                # Project it onto one of the faces of the cube
-                first_side = torch.randint(2 * ndim, [])
-                if first_side // ndim:
-                    first[first_side % ndim] = 0
-                else:
-                    first[first_side % ndim] = shape[first_side % ndim] - 1
 
-            # If not provided, sample last endpoint
+            # If not provided, sample orientation + last endpoint
             if last is None:
-                # Sample a 3D coordinate inside the cube
-                last = torch.rand([ndim]) * (torch.as_tensor(shape) - 1)
-                # Sample the face of the second endpoint
-                last_side = torch.randint(2 * ndim, [])
-                if first_side:
-                    while last_side == first_side:
-                        last_side = torch.randint(2 * ndim, [])
-                # Project the point onto the face
-                if last_side // ndim:
-                    last[last_side % ndim] = 0
-                else:
-                    last[last_side % ndim] = self.shape[last_side % ndim] - 1
+                # sample an orientation
+                orient_mix = self.orient_mix_sampler().item()
+                orient = self.orient_sampler[orient_mix]()
+                # find intersection between line and cube
+                corners = torch.as_tensor([
+                    [0, 0, 0],
+                    [shape[0], 0, 0],
+                    [0, shape[1], 0],
+                    [0, 0, shape[2]],
+                ]).to(first)
+                entrypoint, last = intersect_line_cube(first, orient, corners)
+                if project_first_to_side:
+                    first = entrypoint
 
             # Sample intermediate control points every 5 voxels
             # TODO: make `n` depend on tortuosity
@@ -633,7 +632,7 @@ class SynthSplineBlockV2(nn.Module):
         ----------
         first : (ndim,) tensor, optional
             Coordinates of the first endpoint.
-            Randomly sampled on a face of the cube if not provided.
+            Randomly sampled if not provided.
         n_level : int
             Index of the current level in the tree
         max_level : int
@@ -660,11 +659,20 @@ class SynthSplineBlockV2(nn.Module):
         if n_level >= max_level - 1:
             return curves, levels, []
 
+        corners = torch.as_tensor([
+            [0, 0, 0],
+            [self.shape[0], 0, 0],
+            [0, self.shape[1], 0],
+            [0, 0, self.shape[2]],
+        ])
+
         nb_children = self.nb_children().floor().int()
         branchings = []
         for _ in range(nb_children):
             t = torch.rand([])
             first = root.eval_position(t)
+            if not point_is_inside_cube(first, corners.to(first)):
+                continue
             root_radius = root.eval_radius(t)
             branchings += [(first, root_radius.item())]
             root_radius *= self.voxel_size
@@ -715,6 +723,37 @@ class SynthSplineBlockV2(nn.Module):
 
         import time
         dim = len(self.shape)
+
+        orient_mix = self.orient_mixture()
+        orient_prob = random.Dirichlet([1]*orient_mix.item()).sample()
+        self.orient_mix_sampler = random.Categorical(orient_prob)
+        orient_sampler = self.orient_distribution.lower()[0]
+        self.orient_sampler = []
+        for _ in range(orient_mix):
+            if orient_sampler == 'u':
+                self.orient_sampler += [random.UniformSphere()]
+            elif orient_sampler == 'w':
+                mu = random.UniformSphere()()
+                kappa = 1. / self.orient_concentration()
+                self.orient_sampler += [random.Watson(mu, kappa)]
+            elif orient_sampler == 'b':
+                # sample orthogonal directions
+                # (might be easier to sample on SO(3) from Lie algebra)
+                mu = random.UniformSphere()(3)
+                mu = mu.transpose(-1, -2).matmul(mu)
+                _, mu = torch.linalg.eigh(mu)
+                # sample concentrations
+                kappa = 1. / self.orient_variance(3)
+                kappa = kappa.sort(-1, descending=True).values
+                kappa[..., -1] = 0
+                # create sampler
+                self.orient_sampler += [random.Bingham(R=mu, Z=kappa)]
+            else:
+                raise ValueError('Unknown orientation sampler')
+        print('Orientation distribution:')
+        print(self.orient_mix_sampler)
+        for sampler in self.orient_sampler:
+            print(sampler)
 
         # sample splines
         volume = 1
