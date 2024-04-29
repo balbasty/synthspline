@@ -571,7 +571,7 @@ class SynthSplineBlockV2(nn.Module):
         # We keep trying until we get a segment that's at least 3 voxel long
         segment_length = 0
         project_first_to_side = first is None
-        while segment_length < 3:
+        while segment_length <= 0:
 
             # If not provided, sample first endpoint
             #
