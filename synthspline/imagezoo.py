@@ -19,7 +19,7 @@ class AutoBatchTransform(nn.Module):
     def forward(self, *args, **kwargs):
         # automatically unpack input arguments if they are passed as a
         # list instead of separate arguments.
-        if len(args) == 1 and isinstance(args, (list, tuple)):
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
             args = tuple(args[0])
         return self.xform(*args, **kwargs)
 
@@ -48,6 +48,7 @@ class SynthVesselImage(AutoBatchTransform):
 
         def forward(self, x, c=None):
             """
+
             Parameters
             ----------
             label : (1, *spatial) tensor
@@ -163,7 +164,7 @@ class SynthVesselOCTImage(AutoBatchTransform):
             self.gamma = cc.RandomGammaTransform((0, 5))
             self.bias = cc.RandomMulFieldTransform()
             self.smooth = cc.RandomSmoothTransform()
-            self.noise = cc.RandomGammaNoiseTransform(10)
+            self.noise = cc.RandomGammaNoiseTransform(0.1)
             self.rescale = cc.QuantileTransform()
 
         def forward(self, label, softlabel=None, centerline=None):

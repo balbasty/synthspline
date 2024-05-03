@@ -316,6 +316,9 @@ class ImageApp:
         h = nib.Nifti1Header()
 
         for key, val in out.items():
-            h.set_data_dtype(str(val.dtype).split('.')[-1])
+            if val.dtype == torch.bool:
+                h.set_data_dtype('uint8')
+            else:
+                h.set_data_dtype(str(val.dtype).split('.')[-1])
             nib.save(nib.Nifti1Image(val.squeeze().cpu().numpy(), affine, h),
                      f'{root}/{n:04d}_{key}.nii.gz')
