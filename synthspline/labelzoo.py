@@ -2,7 +2,9 @@ import torch
 from typing import Union, List
 from synthspline import random
 from synthspline.random import AnyVar
-from synthspline.labelsynth import SynthSplineBlock, SynthSplineParameters
+from synthspline.labelsynth import (
+    SynthSplineBlock, SynthSplineBlockV2, SynthSplineParameters
+)
 
 
 class SynthVesselMicro(SynthSplineBlock):
@@ -101,7 +103,7 @@ class SynthVesselPhoto(SynthSplineBlock):
         device: Union[torch.device, str] = None
 
 
-class SynthAxon(SynthSplineBlock):
+class SynthAxon(SynthSplineBlockV2):
 
     class defaults(SynthSplineParameters):
         shape: List[int] = (256, 256, 256)
@@ -122,4 +124,10 @@ class SynthAxon(SynthSplineBlock):
         """Number of branches per spline"""
         radius_ratio: AnyVar = random.LogNormal(mean=1, std=0.1)
         """Radius ratio branch/parent"""
+        orient_distribution: str = 'Bingham'
+        """Distribution from which to sample orientations"""
+        orient_variance: AnyVar = random.LogNormal(mean=10, std=50)
+        """Orientation variance (inverse of concetration)"""
+        orient_mixture: AnyVar = random.RandInt(1, 3)
+        """Number of components in the mixture of Watson/Bingham"""
         device: Union[torch.device, str] = None
